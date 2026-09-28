@@ -1,0 +1,5 @@
+node_modules/
+panimalar.db
+panimalar.db-wal
+panimalar.db-shm
+.DS_Store
