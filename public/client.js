@@ -71,10 +71,10 @@ async function advanceOpdDoctorQueue() {
   }
 }
 
-// ======================== MODULE 3: LEAFLET GPS AMBULANCE MAP ========================
+// Leaflet GPS Ambulance Map Engine
 let map = null;
 let ambulanceMarkers = {};
-const PMCH_COORDS = [13.0498, 80.0754]; // Panimalar Medical College Hospital, Poonamallee
+const PMCH_COORDS = [13.0498, 80.0754];
 
 function initAmbulanceMap() {
   if (map || !document.getElementById('ambulanceMap')) return;
@@ -84,7 +84,6 @@ function initAmbulanceMap() {
     attribution: '© OpenStreetMap contributors'
   }).addTo(map);
 
-  // Hospital Landmark Marker
   const hospitalIcon = L.divIcon({
     className: 'custom-hosp-marker',
     html: '<div style="background:#0e2a47; color:#c69214; font-weight:bold; font-size:11px; padding:4px 8px; border-radius:4px; border:2px solid #c69214; box-shadow:0 2px 6px rgba(0,0,0,0.4);">🏥 PMCH Emergency Bay</div>',
@@ -112,7 +111,6 @@ async function loadAmbulanceFleet() {
     `).join('');
   }
 
-  // Plot/Update on Leaflet Map
   if (map) {
     res.forEach(a => updateAmbulanceMarker(a));
   }
@@ -143,7 +141,7 @@ async function dispatchEmergencyAmbulance(id) {
   loadAmbulanceFleet();
 }
 
-// ======================== MODULE 5: WHATSAPP ALERT DISPATCH ENGINE ========================
+// WhatsApp Alert Dispatch Engine
 function displayWhatsAppToast(phone, body) {
   const toast = document.getElementById('whatsappLiveToast');
   if (!toast) return;
@@ -908,22 +906,26 @@ function applyRolePermissions(user) {
   if (document.getElementById('insUhid')) document.getElementById('insUhid').value = activeUhid;
   if (document.getElementById('abhaUhid')) document.getElementById('abhaUhid').value = activeUhid;
 
+  // Make ambulance and alerts visible to all logged-in roles
+  if (navAmbulance) navAmbulance.style.display = 'inline-block';
+  if (navAlerts) navAlerts.style.display = 'inline-block';
+
   if (user.role === 'ADMIN') {
-    [navAdmin, navTelemed, navAmbulance, navAlerts, navAbdm, navInsurance, navRx, navOpd, navPharmacy, navIpd, navLims, navBilling].forEach(el => el.style.display = 'inline-block');
+    [navAdmin, navTelemed, navAbdm, navInsurance, navRx, navOpd, navPharmacy, navIpd, navLims, navBilling].forEach(el => { if (el) el.style.display = 'inline-block'; });
     switchTab('tab-admin');
   } else if (user.role === 'DOCTOR') {
-    navAdmin.style.display = 'none';
-    navInsurance.style.display = 'none';
-    navPharmacy.style.display = 'none';
-    navBilling.style.display = 'none';
-    [navOpd, navTelemed, navAmbulance, navAlerts, navRx, navIpd, navLims, navAbdm].forEach(el => el.style.display = 'inline-block');
+    if (navAdmin) navAdmin.style.display = 'none';
+    if (navInsurance) navInsurance.style.display = 'none';
+    if (navPharmacy) navPharmacy.style.display = 'none';
+    if (navBilling) navBilling.style.display = 'none';
+    [navOpd, navTelemed, navRx, navIpd, navLims, navAbdm].forEach(el => { if (el) el.style.display = 'inline-block'; });
     switchTab('tab-opd');
   } else {
-    navAdmin.style.display = 'none';
-    navRx.style.display = 'none';
-    navIpd.style.display = 'none';
-    navLims.style.display = 'none';
-    [navOpd, navTelemed, navAmbulance, navAlerts, navPharmacy, navBilling, navInsurance, navAbdm].forEach(el => el.style.display = 'inline-block');
+    if (navAdmin) navAdmin.style.display = 'none';
+    if (navRx) navRx.style.display = 'none';
+    if (navIpd) navIpd.style.display = 'none';
+    if (navLims) navLims.style.display = 'none';
+    [navOpd, navTelemed, navPharmacy, navBilling, navInsurance, navAbdm].forEach(el => { if (el) el.style.display = 'inline-block'; });
     switchTab('tab-opd');
   }
 
@@ -951,7 +953,10 @@ function switchTab(tabId) {
 
   const activeUhid = getActiveUhid();
   if (tabId === 'tab-ambulance') {
-    setTimeout(initAmbulanceMap, 200);
+    setTimeout(() => {
+      initAmbulanceMap();
+      if (map) map.invalidateSize();
+    }, 150);
     loadAmbulanceFleet();
   }
   if (tabId === 'tab-alerts') loadNotificationLogs();

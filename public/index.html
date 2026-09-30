@@ -28,7 +28,6 @@
     }
     @keyframes flash-red { from { background: #dc2626; } to { background: #7f1d1d; } }
 
-    /* WhatsApp Simulated Live Toast */
     #whatsappLiveToast {
       position: fixed; top: 20px; right: 20px; z-index: 999999; display: none;
       background: #075e54; color: #fff; width: 340px; border-radius: 8px;
@@ -115,8 +114,6 @@
 
     .admin-subgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; margin-top: 14px; }
     .copay-box { background: #f8fafc; border: 2px dashed #0284c7; border-radius: 8px; padding: 14px; margin: 12px 0; }
-
-    /* Map container */
     #ambulanceMap { height: 420px; width: 100%; border-radius: 8px; border: 2px solid #cbd5e1; margin-top: 12px; }
   </style>
 </head>
@@ -128,7 +125,7 @@
     <button onclick="dismissCodeBlue()" style="margin-left: 15px; padding: 3px 8px; font-size: 11px; background: #fff; color: #000; border: none; border-radius: 3px; cursor: pointer;">Acknowledge</button>
   </div>
 
-  <!-- MODULE 5: WHATSAPP LIVE CLOUD TOAST -->
+  <!-- WHATSAPP TOAST -->
   <div id="whatsappLiveToast">
     <div style="display: flex; justify-content: space-between; align-items: center;">
       <strong style="color: #25d366; font-size: 13px;">📲 WhatsApp Business Cloud</strong>
@@ -140,7 +137,7 @@
     </div>
   </div>
 
-  <!-- UPI PAYMENT GATEWAY MODAL -->
+  <!-- UPI MODAL -->
   <div id="upiModalOverlay">
     <div class="upi-checkout-card">
       <h3 style="color: var(--pmch-navy); margin-bottom: 2px;">PMCH Secure UPI Gateway</h3>
@@ -236,7 +233,7 @@
         <button class="nav-btn" id="nav-insurance" onclick="switchTab('tab-insurance')">🏥 TPA & PM-JAY Insurance</button>
         <button class="nav-btn" id="nav-billing" onclick="switchTab('tab-billing')">Discharge & Billing</button>
         <button class="nav-btn" id="nav-ehr" onclick="switchTab('tab-ehr')">Patient EHR</button>
-        <button class="nav-btn btn-admin" id="nav-admin" onclick="switchTab('tab-admin')">⚙️️ Admin Console</button>
+        <button class="nav-btn btn-admin" id="nav-admin" onclick="switchTab('tab-admin')">⚙ Admin Console</button>
       </nav>
     </div>
   </header>
@@ -281,7 +278,7 @@
       </div>
     </section>
 
-    <!-- TAB 3: MODULE 3 - AMBULANCE FLEET & LIVE GPS TRACKING MAP -->
+    <!-- TAB 3: AMBULANCE FLEET & GPS MAP -->
     <section id="tab-ambulance" class="tab-content">
       <div style="display: flex; justify-content: space-between; align-items: center;">
         <h2>🚑 Emergency Ambulance Fleet & Live GPS Command Map</h2>
@@ -386,7 +383,7 @@
       </div>
     </section>
 
-    <!-- TAB 8: MODULE 5 - WHATSAPP & SMS TRANSACTIONAL ALERTS -->
+    <!-- TAB 8: WHATSAPP ALERT CENTER -->
     <section id="tab-alerts" class="tab-content">
       <h2>📲 Automated WhatsApp & SMS Communications Hub</h2>
       <p style="color: #64748b; font-size: 13px; margin: 4px 0 14px 0;">Audit logs of automated outbound WhatsApp messages, OPD token queue alerts, and electronic discharge links.</p>
@@ -553,7 +550,7 @@
         </div>
 
         <div class="card">
-          <h4>👨‍‍⚕️ Register Consulting Doctor</h4>
+          <h4>👨‍⚕️ Register Consulting Doctor</h4>
           <input type="text" id="admDocName" placeholder="Dr. Name" />
           <input type="text" id="admDocSpecialty" placeholder="Specialty" />
           <input type="number" id="admDocFee" placeholder="Fee (₹)" value="450" />
