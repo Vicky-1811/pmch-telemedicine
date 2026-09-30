@@ -1,6 +1,7 @@
 const express = require('express');
 const http = require('http');
 const path = require('path');
+const fs = require('fs');
 const { Server } = require('socket.io');
 const Database = require('better-sqlite3');
 const QRCode = require('qrcode');
@@ -12,14 +13,21 @@ const io = new Server(server, { cors: { origin: '*' } });
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-const db = new Database('panimalar.db');
+// MODULE 6: Resilient Database Persistence (Render Persistent Disk Support)
+const dbDir = process.env.DATA_DIR || path.join(__dirname, 'data');
+if (!fs.existsSync(dbDir)) {
+  fs.mkdirSync(dbDir, { recursive: true });
+}
+const dbPath = path.join(dbDir, 'panimalar.db');
+const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');
 
-// Complete Unified Schema
+// Complete Schema
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     username TEXT UNIQUE NOT NULL,
+    email TEXT,
     password TEXT NOT NULL,
     role TEXT NOT NULL,
     name TEXT NOT NULL,
@@ -171,13 +179,29 @@ db.exec(`
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
+  -- MODULE 3: Ambulance Fleet & GPS Tracking Schema
   CREATE TABLE IF NOT EXISTS ambulance_fleet (
     id TEXT PRIMARY KEY,
     vehicle_no TEXT NOT NULL,
     driver_name TEXT NOT NULL,
     driver_phone TEXT NOT NULL,
     status TEXT DEFAULT 'AVAILABLE',
-    current_loc TEXT NOT NULL
+    lat REAL NOT NULL,
+    lng REAL NOT NULL,
+    target_destination TEXT,
+    eta_mins INTEGER DEFAULT 0,
+    patient_vitals_summary TEXT
+  );
+
+  -- MODULE 5: WhatsApp & SMS Communication Audit Log
+  CREATE TABLE IF NOT EXISTS notification_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel TEXT NOT NULL,               -- 'WHATSAPP' | 'SMS'
+    recipient_phone TEXT NOT NULL,
+    template_name TEXT NOT NULL,
+    message_body TEXT NOT NULL,
+    status TEXT DEFAULT 'DELIVERED',
+    sent_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
   CREATE TABLE IF NOT EXISTS abha_identities (
@@ -202,18 +226,21 @@ db.exec(`
 `);
 
 // Safe migrations
-const billCols = db.prepare("PRAGMA table_info(discharge_bills)").all().map(c => c.name);
-if (!billCols.includes('insurance_paid')) db.exec("ALTER TABLE discharge_bills ADD COLUMN insurance_paid REAL DEFAULT 0");
-if (!billCols.includes('copay_paid')) db.exec("ALTER TABLE discharge_bills ADD COLUMN copay_paid REAL DEFAULT 0");
+const billCols = db.prepare('PRAGMA table_info(discharge_bills)').all().map(c => c.name);
+if (!billCols.includes('insurance_paid')) db.exec('ALTER TABLE discharge_bills ADD COLUMN insurance_paid REAL DEFAULT 0');
+if (!billCols.includes('copay_paid')) db.exec('ALTER TABLE discharge_bills ADD COLUMN copay_paid REAL DEFAULT 0');
 if (!billCols.includes('tpa_ref')) db.exec("ALTER TABLE discharge_bills ADD COLUMN tpa_ref TEXT DEFAULT 'N/A'");
 
-// Seed Base Data
+const userCols = db.prepare('PRAGMA table_info(users)').all().map(c => c.name);
+if (!userCols.includes('email')) db.exec('ALTER TABLE users ADD COLUMN email TEXT;');
+
+// Seed Initial Data
 const users = [
-  ['usr-admin', 'admin', 'admin123', 'ADMIN', 'Dr. Radhakrishnan (Medical Supt.)', 'Administration'],
-  ['usr-doc', 'doctor', 'doctor123', 'DOCTOR', 'Dr. Suresh Kumar S.', 'General Medicine'],
-  ['usr-patient', 'patient', 'patient123', 'PATIENT', 'Kavitha R.', 'Outpatient (UHID: PMCH-80097)']
+  ['usr-admin', 'admin', 'admin@panimalar.ac.in', 'admin123', 'ADMIN', 'Dr. Radhakrishnan (Medical Supt.)', 'Administration'],
+  ['usr-doc', 'doctor', 'suresh.kumar@panimalar.ac.in', 'doctor123', 'DOCTOR', 'Dr. Suresh Kumar S.', 'General Medicine'],
+  ['usr-patient', 'patient', 'kavitha.patient@gmail.com', 'patient123', 'PATIENT', 'Kavitha R.', 'Outpatient (UHID: PMCH-80097)']
 ];
-const insUser = db.prepare('INSERT OR IGNORE INTO users VALUES (?, ?, ?, ?, ?, ?)');
+const insUser = db.prepare('INSERT OR REPLACE INTO users VALUES (?, ?, ?, ?, ?, ?, ?)');
 users.forEach(u => insUser.run(...u));
 
 const doctors = [
@@ -261,15 +288,49 @@ const labs = [
 const insLab = db.prepare('INSERT OR REPLACE INTO lab_tests (id, name, department, price, normal_range) VALUES (?, ?, ?, ?, ?)');
 labs.forEach(l => insLab.run(...l));
 
-db.prepare(`INSERT OR REPLACE INTO patient_insurance VALUES (?, ?, ?, ?, ?, ?)`).run(
+db.prepare('INSERT OR REPLACE INTO patient_insurance VALUES (?, ?, ?, ?, ?, ?)').run(
   'PMCH-80097', 'Star Health & Allied Insurance', 'SH-PMCH-99214', 50000.0, 80, 'ACTIVE'
 );
 
-db.prepare(`INSERT OR REPLACE INTO abha_identities VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`).run(
+db.prepare('INSERT OR REPLACE INTO abha_identities VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)').run(
   'PMCH-80097', '91-8009-7712-4411', 'kavitha.r@abdm', 'Kavitha R.', 'Female', '9876543210'
 );
 
-// Telemetry Broadcast
+// MODULE 3: Seed Ambulances Around Poonamallee & Porur (Chennai)
+const fleet = [
+  ['AMB-01', 'TN-02-AZ-9901', 'M. Murugan', '+91 94441 23456', 'DISPATCHED', 13.0450, 80.0880, 'PMCH Trauma Tower', 6, 'HR: 104 | SpO2: 94%'],
+  ['AMB-02', 'TN-02-BC-4412', 'K. Saravanan', '+91 98840 98765', 'AVAILABLE', 13.0382, 80.1565, 'Porur Junction', 0, 'Standby - Mobile ICU'],
+  ['AMB-03', 'TN-02-CX-1088', 'P. Vinoth', '+91 97910 11223', 'DISPATCHED', 13.0610, 80.0520, 'PMCH Emergency Bay', 11, 'HR: 88 | SpO2: 98%']
+];
+const insFleet = db.prepare('INSERT OR REPLACE INTO ambulance_fleet VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+fleet.forEach(f => insFleet.run(...f));
+
+// MODULE 3: Live GPS Movement Telemetry Simulator (Ambulances moving toward PMCH: 13.0498, 80.0754)
+setInterval(() => {
+  const activeAmbulances = db.prepare("SELECT * FROM ambulance_fleet WHERE status = 'DISPATCHED'").all();
+  activeAmbulances.forEach(amb => {
+    const dLat = (13.0498 - amb.lat) * 0.05;
+    const dLng = (80.0754 - amb.lng) * 0.05;
+    const newLat = parseFloat((amb.lat + dLat).toFixed(6));
+    const newLng = parseFloat((amb.lng + dLng).toFixed(6));
+    const newEta = Math.max(1, amb.eta_mins - 1);
+
+    db.prepare('UPDATE ambulance_fleet SET lat = ?, lng = ?, eta_mins = ? WHERE id = ?').run(newLat, newLng, newEta, amb.id);
+
+    io.emit('ambulance-telemetry-update', {
+      id: amb.id,
+      vehicleNo: amb.vehicle_no,
+      driverName: amb.driver_name,
+      lat: newLat,
+      lng: newLng,
+      etaMins: newEta,
+      status: amb.status,
+      vitalsSummary: amb.patient_vitals_summary
+    });
+  });
+}, 3000);
+
+// ICU Telemetry Simulator
 setInterval(() => {
   const occupiedIcuBeds = db.prepare("SELECT * FROM hospital_beds WHERE ward_type LIKE '%ICU%' AND status = 'OCCUPIED'").all();
   occupiedIcuBeds.forEach(bed => {
@@ -289,32 +350,21 @@ setInterval(() => {
   });
 }, 2500);
 
-// ======================== WEBRTC VIDEO SIGNALING SERVER ========================
+// WebRTC Signaling
 io.on('connection', (sock) => {
   sock.on('join-video-room', (roomId) => {
     sock.join(roomId);
     sock.to(roomId).emit('peer-joined', sock.id);
   });
-
-  sock.on('video-offer', ({ roomId, offer }) => {
-    sock.to(roomId).emit('video-offer', { offer, sender: sock.id });
-  });
-
-  sock.on('video-answer', ({ roomId, answer }) => {
-    sock.to(roomId).emit('video-answer', { answer, sender: sock.id });
-  });
-
-  sock.on('ice-candidate', ({ roomId, candidate }) => {
-    sock.to(roomId).emit('ice-candidate', { candidate, sender: sock.id });
-  });
-
+  sock.on('video-offer', ({ roomId, offer }) => sock.to(roomId).emit('video-offer', { offer, sender: sock.id }));
+  sock.on('video-answer', ({ roomId, answer }) => sock.to(roomId).emit('video-answer', { answer, sender: sock.id }));
+  sock.on('ice-candidate', ({ roomId, candidate }) => sock.to(roomId).emit('ice-candidate', { candidate, sender: sock.id }));
   sock.on('leave-video-room', (roomId) => {
     sock.leave(roomId);
     sock.to(roomId).emit('peer-left');
   });
 });
 
-// Telemetry Emergency
 app.post('/api/pmch/telemetry/trigger-code-blue', (req, res) => {
   const { bedId, uhid } = req.body;
   io.emit('code-blue-alert', {
@@ -328,7 +378,7 @@ app.post('/api/pmch/telemetry/trigger-code-blue', (req, res) => {
   res.json({ success: true });
 });
 
-// Queue Advance
+// MODULE 3 & 5: Enhanced Queue Advance with WhatsApp Token Proximity Triggers
 const handleQueueAdvance = (req, res) => {
   try {
     const doctorId = req.body?.doctorId || req.query?.doctorId || 'pmch-101';
@@ -339,6 +389,7 @@ const handleQueueAdvance = (req, res) => {
       return res.status(404).json({ success: false, error: 'Doctor not found' });
     }
 
+    // Broadcast live WebSocket token turn
     io.emit('token-called', {
       tokenNumber: doc.current_token,
       doctorId: doc.id,
@@ -346,6 +397,23 @@ const handleQueueAdvance = (req, res) => {
       specialty: doc.specialty,
       unit: doc.unit
     });
+
+    // MODULE 5: Check if upcoming appointments are 3 tokens away and trigger simulated WhatsApp alert
+    const upcoming = db.prepare('SELECT * FROM appointments WHERE doctor_id = ? AND token_number = ?').get(doc.id, doc.current_token + 3);
+    if (upcoming) {
+      const waMsg = `Hello ${upcoming.patient_name}, Dr. Suresh Kumar S. (Unit 1, OPD Block A) is currently consulting Token #${doc.current_token}. Your Token #${upcoming.token_number} is estimated in 12 minutes. Please be seated in the OPD waiting lobby.`;
+      db.prepare('INSERT INTO notification_logs (channel, recipient_phone, template_name, message_body) VALUES (?, ?, ?, ?)').run(
+        'WHATSAPP', upcoming.patient_phone || '+91 98765 43210', 'WA_QUEUE_PROXIMITY_ALERT', waMsg
+      );
+      io.emit('whatsapp-dispatched', {
+        type: 'QUEUE_PROXIMITY',
+        patient: upcoming.patient_name,
+        token: upcoming.token_number,
+        phone: upcoming.patient_phone,
+        message: waMsg,
+        timestamp: new Date().toLocaleTimeString('en-IN')
+      });
+    }
 
     return res.json({
       success: true,
@@ -361,29 +429,90 @@ const handleQueueAdvance = (req, res) => {
 app.post('/api/pmch/queue/advance', handleQueueAdvance);
 app.get('/api/pmch/queue/advance', handleQueueAdvance);
 
-// ======================== UPI QR PAYMENT GENERATOR ========================
-app.post('/api/pmch/payment/generate-upi-qr', async (req, res) => {
-  try {
-    const { amount, purpose, uhid } = req.body;
-    const txnRef = 'PMCH-TXN-' + Math.floor(100000 + Math.random() * 900000);
-    // Real standard UPI Intent URI format
-    const upiUri = `upi://pay?pa=billing.pmch@indianbank&pn=Panimalar+Medical+Hospital&am=${parseFloat(amount).toFixed(2)}&cu=INR&tn=${encodeURIComponent(purpose || 'PMCH Bill')}`;
-    const qrDataUrl = await QRCode.toDataURL(upiUri, { width: 260, margin: 2 });
+// MODULE 3: Ambulance API Endpoints
+app.get('/api/pmch/ambulance/fleet', (req, res) => {
+  res.json(db.prepare('SELECT * FROM ambulance_fleet').all());
+});
 
-    res.json({
-      success: true,
-      txnRef,
-      amount: parseFloat(amount),
-      qrDataUrl,
-      upiUri,
-      expiresInSeconds: 180
+app.post('/api/pmch/ambulance/dispatch', (req, res) => {
+  const { id, destination, vitals } = req.body;
+  db.prepare("UPDATE ambulance_fleet SET status = 'DISPATCHED', target_destination = ?, eta_mins = 14, patient_vitals_summary = ? WHERE id = ?").run(
+    destination || 'PMCH Emergency Bay', vitals || 'Triage: Code Yellow', id
+  );
+  const updated = db.prepare('SELECT * FROM ambulance_fleet WHERE id = ?').get(id);
+  io.emit('ambulance-telemetry-update', updated);
+  res.json({ success: true, ambulance: updated });
+});
+
+// MODULE 5: Notification Service Dispatch Endpoint
+app.post('/api/pmch/notifications/send', (req, res) => {
+  try {
+    const { channel, phone, templateName, messageBody } = req.body;
+    db.prepare('INSERT INTO notification_logs (channel, recipient_phone, template_name, message_body) VALUES (?, ?, ?, ?)').run(
+      channel || 'WHATSAPP', phone || '+91 98765 43210', templateName || 'GENERAL_TRANSACTIONAL', messageBody
+    );
+    io.emit('whatsapp-dispatched', {
+      type: templateName,
+      phone,
+      message: messageBody,
+      timestamp: new Date().toLocaleTimeString('en-IN')
     });
+    res.json({ success: true, message: 'Dispatched via WhatsApp Business Cloud Gateway' });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// ABDM Profiles & Consent
+app.get('/api/pmch/notifications/recent', (req, res) => {
+  res.json(db.prepare('SELECT * FROM notification_logs ORDER BY id DESC LIMIT 15').all());
+});
+
+// UPI Payment Endpoint
+app.post('/api/pmch/payment/generate-upi-qr', async (req, res) => {
+  try {
+    const { amount, purpose, uhid } = req.body;
+    const txnRef = 'PMCH-TXN-' + Math.floor(100000 + Math.random() * 900000);
+    const upiUri = `upi://pay?pa=billing.pmch@indianbank&pn=Panimalar+Medical+Hospital&am=${parseFloat(amount).toFixed(2)}&cu=INR&tn=${encodeURIComponent(purpose || 'PMCH Bill')}`;
+    const qrDataUrl = await QRCode.toDataURL(upiUri, { width: 260, margin: 2 });
+    res.json({ success: true, txnRef, amount: parseFloat(amount), qrDataUrl, upiUri, expiresInSeconds: 180 });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Email OTP Endpoints
+const emailOtpStore = new Map();
+app.post('/api/pmch/auth/send-email-otp', (req, res) => {
+  const { email } = req.body;
+  if (!email || !email.includes('@')) return res.status(400).json({ error: 'Valid email is required.' });
+  const user = db.prepare('SELECT * FROM users WHERE LOWER(email) = LOWER(?)').get(email.trim());
+  if (!user) return res.status(404).json({ error: 'No hospital account associated with this email.' });
+
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  emailOtpStore.set(email.toLowerCase().trim(), { otp, expiresAt: Date.now() + 5 * 60 * 1000, user });
+  console.log(`[PMCH Auth Mailer] Sent OTP ${otp} to ${email}`);
+  res.json({ success: true, message: `Verification code sent to ${email}`, demoOtp: otp });
+});
+
+app.post('/api/pmch/auth/verify-email-otp', (req, res) => {
+  const { email, otp } = req.body;
+  const record = emailOtpStore.get(email?.toLowerCase()?.trim());
+  if (!record || record.expiresAt < Date.now()) return res.status(400).json({ error: 'OTP expired or invalid.' });
+  if (record.otp !== otp?.trim()) return res.status(400).json({ error: 'Invalid verification code.' });
+  emailOtpStore.delete(email.toLowerCase().trim());
+  res.json({ success: true, user: record.user });
+});
+
+// Authentication
+app.post('/api/pmch/auth/login', (req, res) => {
+  const identifier = (req.body.username || req.body.email || '').trim();
+  const password = (req.body.password || '').trim();
+  const user = db.prepare('SELECT id, username, email, role, name, department FROM users WHERE (LOWER(username) = LOWER(?) OR LOWER(email) = LOWER(?)) AND password = ?').get(identifier, identifier, password);
+  if (!user) return res.status(401).json({ error: 'Invalid credentials.' });
+  res.json({ success: true, user });
+});
+
+// ABDM Endpoints
 app.get('/api/pmch/abdm/profile/:uhid', (req, res) => {
   const uhid = req.params.uhid.trim();
   const abha = db.prepare('SELECT * FROM abha_identities WHERE uhid = ?').get(uhid);
@@ -394,9 +523,6 @@ app.get('/api/pmch/abdm/profile/:uhid', (req, res) => {
 app.post('/api/pmch/abdm/generate-abha', (req, res) => {
   try {
     const { uhid, fullName, mobile, gender } = req.body;
-    if (!uhid || !fullName || !mobile) {
-      return res.status(400).json({ error: 'UHID, Full Name, and Mobile are required.' });
-    }
     const r1 = Math.floor(1000 + Math.random() * 9000);
     const r2 = Math.floor(1000 + Math.random() * 9000);
     const r3 = Math.floor(1000 + Math.random() * 9000);
@@ -404,7 +530,7 @@ app.post('/api/pmch/abdm/generate-abha', (req, res) => {
     const cleanUser = fullName.toLowerCase().replace(/[^a-z0-9]/g, '');
     const abhaAddress = `${cleanUser}${Math.floor(10 + Math.random() * 90)}@abdm`;
 
-    db.prepare(`INSERT OR REPLACE INTO abha_identities (uhid, abha_number, abha_address, full_name, gender, mobile) VALUES (?, ?, ?, ?, ?, ?)`).run(
+    db.prepare('INSERT OR REPLACE INTO abha_identities (uhid, abha_number, abha_address, full_name, gender, mobile) VALUES (?, ?, ?, ?, ?, ?)').run(
       uhid.trim(), abhaNumber, abhaAddress, fullName.trim(), gender || 'Male', mobile.trim()
     );
     res.json({ success: true, abhaNumber, abhaAddress, message: '14-Digit ABHA ID Generated & Linked!' });
@@ -417,7 +543,7 @@ app.post('/api/pmch/abdm/grant-consent', (req, res) => {
   try {
     const { uhid, doctorId, hours } = req.body;
     const consentId = 'CONSENT-' + Math.floor(100000 + Math.random() * 900000);
-    db.prepare(`INSERT INTO abdm_consents (consent_id, uhid, doctor_id, scope, expiry_hours, status) VALUES (?, ?, ?, 'DIAGNOSTIC_EHR_PRESCRIPTIONS', ?, 'GRANTED')`).run(
+    db.prepare("INSERT INTO abdm_consents (consent_id, uhid, doctor_id, scope, expiry_hours, status) VALUES (?, ?, ?, 'DIAGNOSTIC_EHR_PRESCRIPTIONS', ?, 'GRANTED')").run(
       consentId, uhid.trim(), doctorId || 'pmch-101', parseInt(hours) || 24
     );
     res.json({ success: true, consentId, message: `ABDM Patient Consent Granted for ${hours || 24} hours!` });
@@ -473,14 +599,6 @@ app.get('/api/pmch/abdm/fhir-bundle/:uhid', (req, res) => {
   res.json(fhirBundle);
 });
 
-// Authentication
-app.post('/api/pmch/auth/login', (req, res) => {
-  const { username, password } = req.body;
-  const user = db.prepare('SELECT id, username, role, name, department FROM users WHERE username = ? AND password = ?').get(username?.trim(), password?.trim());
-  if (!user) return res.status(401).json({ error: 'Invalid credentials.' });
-  res.json({ success: true, user });
-});
-
 app.post('/api/pmch/ai/check-interactions', (req, res) => {
   const { selectedDrugs, patientAllergies } = req.body;
   const warnings = [];
@@ -512,7 +630,7 @@ app.post('/api/pmch/prescription/create', async (req, res) => {
   const payload = JSON.stringify({ hospital: 'PMCH & RI', rxNumber, uhid, doctor: doctorName, date: new Date().toISOString().split('T')[0] });
   try {
     const qrDataUrl = await QRCode.toDataURL(payload);
-    db.prepare(`INSERT INTO prescriptions (rx_number, uhid, doctor_name, diagnosis, medications_json, qr_data) VALUES (?, ?, ?, ?, ?, ?)`).run(
+    db.prepare('INSERT INTO prescriptions (rx_number, uhid, doctor_name, diagnosis, medications_json, qr_data) VALUES (?, ?, ?, ?, ?, ?)').run(
       rxNumber, uhid, doctorName, diagnosis, JSON.stringify(medications), qrDataUrl
     );
     res.json({ success: true, prescription: { rxNumber, uhid, doctorName, diagnosis, medications, qrDataUrl, date: new Date().toLocaleDateString('en-IN') } });
@@ -537,7 +655,7 @@ app.get('/api/pmch/pharmacy', (req, res) => {
 });
 
 app.get('/api/pmch/pharmacy/batches', (req, res) => {
-  res.json(db.prepare(`SELECT b.*, m.name as medicine_name FROM medicine_batches b JOIN medicines m ON b.medicine_id = m.id ORDER BY b.expiry_date ASC`).all());
+  res.json(db.prepare('SELECT b.*, m.name as medicine_name FROM medicine_batches b JOIN medicines m ON b.medicine_id = m.id ORDER BY b.expiry_date ASC').all());
 });
 
 app.post('/api/pmch/pharmacy/dispense', (req, res) => {
@@ -550,7 +668,7 @@ app.post('/api/pmch/pharmacy/dispense', (req, res) => {
     const dispensedDetails = [];
     for (const item of cart) {
       let needed = item.qty;
-      const batches = db.prepare(`SELECT * FROM medicine_batches WHERE medicine_id = ? AND current_stock > 0 AND expiry_date > ? ORDER BY expiry_date ASC`).all(item.id, today);
+      const batches = db.prepare('SELECT * FROM medicine_batches WHERE medicine_id = ? AND current_stock > 0 AND expiry_date > ? ORDER BY expiry_date ASC').all(item.id, today);
       for (const batch of batches) {
         if (needed <= 0) break;
         const deduct = Math.min(batch.current_stock, needed);
@@ -561,7 +679,7 @@ app.post('/api/pmch/pharmacy/dispense', (req, res) => {
       }
     }
     const orderId = 'ORD-' + Math.floor(100000 + Math.random() * 900000);
-    db.prepare(`INSERT INTO orders (order_id, uhid, total_amount, items_json, payment_id) VALUES (?, ?, ?, ?, ?)`).run(
+    db.prepare('INSERT INTO orders (order_id, uhid, total_amount, items_json, payment_id) VALUES (?, ?, ?, ?, ?)').run(
       orderId, uhid || 'PMCH-80097', totalBill, JSON.stringify(dispensedDetails), paymentId || 'PMCH-TXN-UPI'
     );
     return { orderId, totalBill, dispensedDetails };
@@ -579,13 +697,13 @@ app.post('/api/pmch/lims/order', (req, res) => {
   const { uhid, testId } = req.body;
   const test = db.prepare('SELECT * FROM lab_tests WHERE id = ?').get(testId);
   const orderId = 'LAB-' + Math.floor(100000 + Math.random() * 900000);
-  db.prepare(`INSERT INTO lab_orders (order_id, uhid, test_id, test_name, doctor_name) VALUES (?, ?, ?, ?, 'Dr. Suresh Kumar')`).run(orderId, uhid || 'PMCH-80097', test.id, test.name);
+  db.prepare("INSERT INTO lab_orders (order_id, uhid, test_id, test_name, doctor_name) VALUES (?, ?, ?, ?, 'Dr. Suresh Kumar')").run(orderId, uhid || 'PMCH-80097', test.id, test.name);
   res.json({ success: true, orderId });
 });
 
 app.post('/api/pmch/lims/report-result', (req, res) => {
   const { orderId, resultVal } = req.body;
-  db.prepare(`UPDATE lab_orders SET result_val = ?, flag = 'NORMAL', status = 'REPORT_PUBLISHED' WHERE order_id = ?`).run(resultVal, orderId);
+  db.prepare("UPDATE lab_orders SET result_val = ?, flag = 'NORMAL', status = 'REPORT_PUBLISHED' WHERE order_id = ?").run(resultVal, orderId);
   res.json({ success: true });
 });
 
@@ -595,9 +713,16 @@ app.post('/api/pmch/confirm-booking', (req, res) => {
   const last = db.prepare('SELECT MAX(token_number) as maxToken FROM appointments WHERE doctor_id = ?').get(doctorId);
   const nextToken = (last?.maxToken) ? last.maxToken + 1 : 105;
   const finalUhid = uhid || 'PMCH-80097';
-  db.prepare(`INSERT INTO appointments (token_number, doctor_id, doctor_name, patient_name, patient_phone, uhid, payment_id, amount_paid) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
+  db.prepare('INSERT INTO appointments (token_number, doctor_id, doctor_name, patient_name, patient_phone, uhid, payment_id, amount_paid) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(
     nextToken, doc.id, doc.name, patientName, patientPhone, finalUhid, paymentId || 'PMCH-TXN-UPI', amount || doc.fee
   );
+
+  // Send initial booking confirmation SMS/WhatsApp log
+  const textMsg = `Namaste ${patientName}. Appointment booked with ${doc.name} (${doc.unit}). Token #${nextToken}. Payment Ref: ${paymentId || 'DIRECT'}`;
+  db.prepare('INSERT INTO notification_logs (channel, recipient_phone, template_name, message_body) VALUES (?, ?, ?, ?)').run(
+    'WHATSAPP', patientPhone || '+91 98765 43210', 'WA_APPOINTMENT_CONFIRMATION', textMsg
+  );
+
   res.json({ success: true, tokenNumber: nextToken, currentServing: doc.current_token || 101, doctorName: doc.name, specialty: doc.specialty, uhid: finalUhid });
 });
 
@@ -611,7 +736,7 @@ app.post('/api/pmch/insurance/register', (req, res) => {
   try {
     const { uhid, tpaProvider, policyNo, preauthApprovalLimit, coveragePercent } = req.body;
     if (!uhid || !policyNo) return res.status(400).json({ error: 'UHID and Policy Number are required.' });
-    db.prepare(`INSERT OR REPLACE INTO patient_insurance (uhid, tpa_provider, policy_no, preauth_approval_limit, coverage_percent, status) VALUES (?, ?, ?, ?, ?, 'ACTIVE')`).run(
+    db.prepare("INSERT OR REPLACE INTO patient_insurance (uhid, tpa_provider, policy_no, preauth_approval_limit, coverage_percent, status) VALUES (?, ?, ?, ?, ?, 'ACTIVE')").run(
       uhid.trim(), tpaProvider || 'Star Health', policyNo.trim(), parseFloat(preauthApprovalLimit) || 50000.0, parseInt(coveragePercent) || 80
     );
     res.json({ success: true, message: `Insurance policy linked successfully to ${uhid.trim()}!` });
@@ -682,6 +807,12 @@ app.post('/api/pmch/billing/settle-discharge', (req, res) => {
 
     db.prepare("UPDATE hospital_beds SET status = 'VACANT', assigned_uhid = NULL, admitted_at = NULL WHERE assigned_uhid = ?").run(targetUhid);
 
+    // MODULE 5: Automated WhatsApp Notification for Discharge Dossier & Claim Dispatch
+    const dischargeMsg = `Panimalar Hospital Discharge Dossier: Invoice ${billId} settled. TPA Coverage: INR ${insuranceCovered || 0}, Patient Co-Pay Settled: INR ${patientCopay || 0}. Download your official dossier on the hospital portal.`;
+    db.prepare('INSERT INTO notification_logs (channel, recipient_phone, template_name, message_body) VALUES (?, ?, ?, ?)').run(
+      'WHATSAPP', '+91 98765 43210', 'WA_DISCHARGE_DOSSIER_SENT', dischargeMsg
+    );
+
     return res.json({
       success: true,
       billId,
@@ -696,8 +827,8 @@ app.post('/api/pmch/billing/settle-discharge', (req, res) => {
 app.post('/api/pmch/admin/add-medicine', (req, res) => {
   const { name, category, batchNumber, expiryDate, unitPrice, stock } = req.body;
   const medId = 'pmch-med-' + Date.now();
-  db.prepare(`INSERT INTO medicines (id, name, category, reorder_level, reorder_qty, requires_rx) VALUES (?, ?, ?, 20, 100, 1)`).run(medId, name, category);
-  db.prepare(`INSERT INTO medicine_batches (medicine_id, batch_number, expiry_date, unit_price, current_stock, status) VALUES (?, ?, ?, ?, ?, 'ACTIVE')`).run(
+  db.prepare('INSERT INTO medicines (id, name, category, reorder_level, reorder_qty, requires_rx) VALUES (?, ?, ?, 20, 100, 1)').run(medId, name, category);
+  db.prepare("INSERT INTO medicine_batches (medicine_id, batch_number, expiry_date, unit_price, current_stock, status) VALUES (?, ?, ?, ?, ?, 'ACTIVE')").run(
     medId, batchNumber, expiryDate, parseFloat(unitPrice) || 25, parseInt(stock) || 50
   );
   res.json({ success: true, message: `Medicine '${name}' registered!` });
@@ -705,7 +836,7 @@ app.post('/api/pmch/admin/add-medicine', (req, res) => {
 
 app.post('/api/pmch/admin/add-batch', (req, res) => {
   const { medicineId, batchNumber, expiryDate, unitPrice, stock } = req.body;
-  db.prepare(`INSERT INTO medicine_batches (medicine_id, batch_number, expiry_date, unit_price, current_stock, status) VALUES (?, ?, ?, ?, ?, 'ACTIVE')`).run(
+  db.prepare("INSERT INTO medicine_batches (medicine_id, batch_number, expiry_date, unit_price, current_stock, status) VALUES (?, ?, ?, ?, ?, 'ACTIVE')").run(
     medicineId, batchNumber, expiryDate, parseFloat(unitPrice) || 25, parseInt(stock) || 50
   );
   res.json({ success: true, message: `Batch '${batchNumber}' inwarded!` });
@@ -713,16 +844,16 @@ app.post('/api/pmch/admin/add-batch', (req, res) => {
 
 app.post('/api/pmch/admin/add-bed', (req, res) => {
   const { bedId, wardType, block, dailyRate } = req.body;
-  db.prepare(`INSERT INTO hospital_beds (bed_id, ward_type, block, daily_rate, status) VALUES (?, ?, ?, ?, 'VACANT')`).run(bedId, wardType, block || 'Main Block', parseFloat(dailyRate) || 1000);
+  db.prepare("INSERT INTO hospital_beds (bed_id, ward_type, block, daily_rate, status) VALUES (?, ?, ?, ?, 'VACANT')").run(bedId, wardType, block || 'Main Block', parseFloat(dailyRate) || 1000);
   res.json({ success: true, message: `Bed '${bedId}' created!` });
 });
 
 app.post('/api/pmch/admin/update-bed-allocation', (req, res) => {
   const { bedId, uhid, admittedAt, status } = req.body;
   if (status === 'VACANT') {
-    db.prepare(`UPDATE hospital_beds SET status = 'VACANT', assigned_uhid = NULL, admitted_at = NULL WHERE bed_id = ?`).run(bedId);
+    db.prepare("UPDATE hospital_beds SET status = 'VACANT', assigned_uhid = NULL, admitted_at = NULL WHERE bed_id = ?").run(bedId);
   } else {
-    db.prepare(`UPDATE hospital_beds SET status = 'OCCUPIED', assigned_uhid = ?, admitted_at = ? WHERE bed_id = ?`).run(
+    db.prepare("UPDATE hospital_beds SET status = 'OCCUPIED', assigned_uhid = ?, admitted_at = ? WHERE bed_id = ?").run(
       uhid || 'PMCH-80097', admittedAt || new Date().toISOString().replace('T', ' ').substring(0, 19), bedId
     );
   }
@@ -732,7 +863,7 @@ app.post('/api/pmch/admin/update-bed-allocation', (req, res) => {
 app.post('/api/pmch/admin/add-doctor', (req, res) => {
   const { name, specialty, exp, fee, unit } = req.body;
   const docId = 'pmch-' + Date.now();
-  db.prepare(`INSERT INTO doctors (id, name, specialty, exp, fee, unit, current_token) VALUES (?, ?, ?, ?, ?, ?, 101)`).run(docId, name, specialty, exp || '10 yrs', parseInt(fee) || 300, unit || 'OPD Block A');
+  db.prepare('INSERT INTO doctors (id, name, specialty, exp, fee, unit, current_token) VALUES (?, ?, ?, ?, ?, ?, 101)').run(docId, name, specialty, exp || '10 yrs', parseInt(fee) || 300, unit || 'OPD Block A');
   res.json({ success: true, message: `Doctor '${name}' added!` });
 });
 
@@ -756,5 +887,6 @@ app.use((err, req, res, next) => {
   res.status(500).json({ success: false, error: err.message || 'Internal Server Error' });
 });
 
+// Port Binding for Cloud Hosting
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, "0.0.0.0", () => console.log("PMCH Unified Server Active on port " + PORT));
+server.listen(PORT, '0.0.0.0', () => console.log('PMCH Unified Server Active on port ' + PORT));

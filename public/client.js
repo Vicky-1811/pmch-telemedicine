@@ -9,7 +9,7 @@ try {
   console.warn('Socket connection delayed:', e);
 }
 
-// ======================== HARDENED AUDIO QUEUE CALLER ========================
+// Hardened Audio Queue Chime & Speech Synthesis
 let audioCtx = null;
 async function playAlertTone() {
   try {
@@ -71,77 +71,131 @@ async function advanceOpdDoctorQueue() {
   }
 }
 
-// ======================== FEATURE 1: WEBRTC VIDEO CONSULTATION ========================
-let localStream = null;
-let peerConnection = null;
-const telemedRoomId = 'pmch-consultation-room-101';
-const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+// ======================== MODULE 3: LEAFLET GPS AMBULANCE MAP ========================
+let map = null;
+let ambulanceMarkers = {};
+const PMCH_COORDS = [13.0498, 80.0754]; // Panimalar Medical College Hospital, Poonamallee
 
-async function startTelemedCall() {
-  try {
-    localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-    document.getElementById('localVideo').srcObject = localStream;
+function initAmbulanceMap() {
+  if (map || !document.getElementById('ambulanceMap')) return;
 
-    peerConnection = new RTCPeerConnection(rtcConfig);
-    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+  map = L.map('ambulanceMap').setView(PMCH_COORDS, 13);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap contributors'
+  }).addTo(map);
 
-    peerConnection.ontrack = (event) => {
-      document.getElementById('remoteVideo').srcObject = event.streams[0];
-    };
+  // Hospital Landmark Marker
+  const hospitalIcon = L.divIcon({
+    className: 'custom-hosp-marker',
+    html: '<div style="background:#0e2a47; color:#c69214; font-weight:bold; font-size:11px; padding:4px 8px; border-radius:4px; border:2px solid #c69214; box-shadow:0 2px 6px rgba(0,0,0,0.4);">🏥 PMCH Emergency Bay</div>',
+    iconSize: [140, 30]
+  });
+  L.marker(PMCH_COORDS, { icon: hospitalIcon }).addTo(map).bindPopup('<b>Panimalar Medical College Hospital</b><br/>Level 1 Trauma Bay');
 
-    peerConnection.onicecandidate = (event) => {
-      if (event.candidate && socket) {
-        socket.emit('ice-candidate', { roomId: telemedRoomId, candidate: event.candidate });
-      }
-    };
+  loadAmbulanceFleet();
+}
 
-    if (socket) {
-      socket.emit('join-video-room', telemedRoomId);
+async function loadAmbulanceFleet() {
+  const res = await (await fetch('/api/pmch/ambulance/fleet')).json();
+  const tbody = document.getElementById('ambulanceTableBody');
+  if (tbody) {
+    tbody.innerHTML = res.map(a => `
+      <tr>
+        <td><strong>${a.id}</strong></td>
+        <td><code>${a.vehicle_no}</code></td>
+        <td>${a.driver_phone} (${a.driver_name})</td>
+        <td><span class="badge ${a.status === 'DISPATCHED' ? 'badge-danger' : 'badge-success'}">${a.status}</span></td>
+        <td><strong>${a.eta_mins > 0 ? a.eta_mins + ' mins' : 'At Bay'}</strong></td>
+        <td style="color:#0284c7; font-size:11.5px;">${a.patient_vitals_summary}</td>
+        <td>${a.status === 'AVAILABLE' ? `<button class="btn btn-danger" style="padding:3px 8px; font-size:11px;" onclick="dispatchEmergencyAmbulance('${a.id}')">Dispatch</button>` : '<span class="badge badge-navy">En-Route</span>'}</td>
+      </tr>
+    `).join('');
+  }
 
-      const offer = await peerConnection.createOffer();
-      await peerConnection.setLocalDescription(offer);
-      socket.emit('video-offer', { roomId: telemedRoomId, offer });
-    }
-  } catch (err) {
-    alert('Camera/Microphone permission denied or device unavailable: ' + err.message);
+  // Plot/Update on Leaflet Map
+  if (map) {
+    res.forEach(a => updateAmbulanceMarker(a));
   }
 }
 
-function endTelemedCall() {
-  if (localStream) {
-    localStream.getTracks().forEach(t => t.stop());
-    localStream = null;
-  }
-  if (peerConnection) {
-    peerConnection.close();
-    peerConnection = null;
-  }
-  document.getElementById('localVideo').srcObject = null;
-  document.getElementById('remoteVideo').srcObject = null;
-  if (socket) socket.emit('leave-video-room', telemedRoomId);
-  alert('Telemedicine consultation ended.');
-}
+function updateAmbulanceMarker(a) {
+  if (!map) return;
+  const isEnRoute = a.status === 'DISPATCHED';
+  const iconHtml = `<div style="background:${isEnRoute ? '#dc2626' : '#15803d'}; color:#fff; font-size:11px; font-weight:bold; padding:3px 6px; border-radius:12px; border:2px solid #fff; box-shadow:0 2px 4px rgba(0,0,0,0.5);">🚑 ${a.id} (${a.eta_mins}m)</div>`;
+  const icon = L.divIcon({ className: 'amb-icon', html: iconHtml, iconSize: [95, 24] });
 
-function toggleLocalAudio() {
-  if (!localStream) return;
-  const audioTrack = localStream.getAudioTracks()[0];
-  if (audioTrack) {
-    audioTrack.enabled = !audioTrack.enabled;
-    document.getElementById('btnToggleAudio').innerText = audioTrack.enabled ? '🎙️ Mute Mic' : '🔇 Unmute Mic';
+  if (ambulanceMarkers[a.id]) {
+    ambulanceMarkers[a.id].setLatLng([a.lat, a.lng]);
+    ambulanceMarkers[a.id].setIcon(icon);
+  } else {
+    ambulanceMarkers[a.id] = L.marker([a.lat, a.lng], { icon }).addTo(map)
+      .bindPopup(`<b>${a.id} (${a.vehicle_no})</b><br/>Driver: ${a.driver_name}<br/>ETA: ${a.eta_mins} mins<br/>Vitals: ${a.patient_vitals_summary}`);
   }
 }
 
-function toggleLocalVideo() {
-  if (!localStream) return;
-  const videoTrack = localStream.getVideoTracks()[0];
-  if (videoTrack) {
-    videoTrack.enabled = !videoTrack.enabled;
-    document.getElementById('btnToggleVideo').innerText = videoTrack.enabled ? '📷 Turn Off Camera' : '🎥 Turn On Camera';
-  }
+async function dispatchEmergencyAmbulance(id) {
+  const res = await (await fetch('/api/pmch/ambulance/dispatch', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, destination: 'PMCH Trauma Tower', vitals: 'SpO2: 91% | Pulse: 110 | Trauma Alert' })
+  })).json();
+  alert(`🚨 Ambulance ${id} Dispatched to PMCH Trauma Bay! Live GPS tracking active.`);
+  loadAmbulanceFleet();
 }
 
-// Socket Signaling Listeners
+// ======================== MODULE 5: WHATSAPP ALERT DISPATCH ENGINE ========================
+function displayWhatsAppToast(phone, body) {
+  const toast = document.getElementById('whatsappLiveToast');
+  if (!toast) return;
+  document.getElementById('waToastBody').innerText = `To: ${phone}\n\n${body}`;
+  document.getElementById('waToastTime').innerText = new Date().toLocaleTimeString('en-IN');
+  toast.style.display = 'block';
+  setTimeout(() => { if (toast) toast.style.display = 'none'; }, 8000);
+}
+
+async function sendManualWhatsApp() {
+  const phone = document.getElementById('manualAlertPhone').value;
+  const templateName = document.getElementById('manualAlertTemplate').value;
+  const messageBody = document.getElementById('manualAlertMsg').value;
+
+  const res = await (await fetch('/api/pmch/notifications/send', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ channel: 'WHATSAPP', phone, templateName, messageBody })
+  })).json();
+
+  alert(res.message);
+  loadNotificationLogs();
+}
+
+async function loadNotificationLogs() {
+  const res = await (await fetch('/api/pmch/notifications/recent')).json();
+  const tbody = document.getElementById('notificationLogBody');
+  if (!tbody) return;
+  tbody.innerHTML = res.map(l => `
+    <tr>
+      <td><span class="badge ${l.channel === 'WHATSAPP' ? 'badge-success' : 'badge-navy'}">${l.channel}</span></td>
+      <td><code>${l.recipient_phone}</code></td>
+      <td><strong>${l.template_name}</strong></td>
+      <td style="font-size:11.5px; max-width:320px;">${l.message_body}</td>
+      <td><span class="badge badge-success">${l.status}</span></td>
+      <td><small>${l.sent_at}</small></td>
+    </tr>
+  `).join('');
+}
+
+// Socket Handlers
 if (socket) {
+  socket.on('ambulance-telemetry-update', (data) => {
+    updateAmbulanceMarker(data);
+    loadAmbulanceFleet();
+  });
+
+  socket.on('whatsapp-dispatched', (data) => {
+    displayWhatsAppToast(data.phone || '+91 98765 43210', data.message);
+    loadNotificationLogs();
+  });
+
   socket.on('video-offer', async ({ offer }) => {
     if (!peerConnection) {
       peerConnection = new RTCPeerConnection(rtcConfig);
@@ -158,9 +212,7 @@ if (socket) {
   });
 
   socket.on('video-answer', async ({ answer }) => {
-    if (peerConnection) {
-      await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
-    }
+    if (peerConnection) await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
   });
 
   socket.on('ice-candidate', async ({ candidate }) => {
@@ -224,7 +276,75 @@ async function simulateCodeBlue() {
   });
 }
 
-// ======================== FEATURE 3: LIVE UPI PAYMENT GATEWAY MODAL ========================
+// WebRTC Video Controls
+let localStream = null;
+let peerConnection = null;
+const telemedRoomId = 'pmch-consultation-room-101';
+const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+
+async function startTelemedCall() {
+  try {
+    localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    document.getElementById('localVideo').srcObject = localStream;
+
+    peerConnection = new RTCPeerConnection(rtcConfig);
+    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+    peerConnection.ontrack = (event) => {
+      document.getElementById('remoteVideo').srcObject = event.streams[0];
+    };
+
+    peerConnection.onicecandidate = (event) => {
+      if (event.candidate && socket) {
+        socket.emit('ice-candidate', { roomId: telemedRoomId, candidate: event.candidate });
+      }
+    };
+
+    if (socket) {
+      socket.emit('join-video-room', telemedRoomId);
+      const offer = await peerConnection.createOffer();
+      await peerConnection.setLocalDescription(offer);
+      socket.emit('video-offer', { roomId: telemedRoomId, offer });
+    }
+  } catch (err) {
+    alert('Camera/Microphone access error: ' + err.message);
+  }
+}
+
+function endTelemedCall() {
+  if (localStream) {
+    localStream.getTracks().forEach(t => t.stop());
+    localStream = null;
+  }
+  if (peerConnection) {
+    peerConnection.close();
+    peerConnection = null;
+  }
+  document.getElementById('localVideo').srcObject = null;
+  document.getElementById('remoteVideo').srcObject = null;
+  if (socket) socket.emit('leave-video-room', telemedRoomId);
+  alert('Telemedicine consultation ended.');
+}
+
+function toggleLocalAudio() {
+  if (!localStream) return;
+  const track = localStream.getAudioTracks()[0];
+  if (track) {
+    track.enabled = !track.enabled;
+    document.getElementById('btnToggleAudio').innerText = track.enabled ? '🎙️ Mute Mic' : '🔇 Unmute Mic';
+  }
+}
+
+function toggleLocalVideo() {
+  if (!localStream) return;
+  const track = localStream.getVideoTracks()[0];
+  if (track) {
+    track.enabled = !track.enabled;
+    document.getElementById('btnToggleVideo').innerText = track.enabled ? '📷 Turn Off Camera' : '🎥 Turn On Camera';
+  }
+}
+
+// UPI Payment Gateway Engine
 let activePaymentCallback = null;
 let upiTimerInterval = null;
 
@@ -259,7 +379,7 @@ async function launchUpiPaymentModal({ amount, purpose, uhid, onComplete }) {
     if (seconds <= 0) {
       clearInterval(upiTimerInterval);
       closeUpiModal();
-      alert('UPI transaction window expired. Please try again.');
+      alert('UPI transaction window expired.');
     }
   }, 1000);
 }
@@ -273,13 +393,12 @@ function closeUpiModal() {
 function simulateUpiApproval() {
   const txnRef = document.getElementById('upiTxnRef').innerText;
   closeUpiModal();
-  alert(`💳 UPI Payment Successful!\nBank Ref: ${txnRef}\nStatus: SETTLED & VERIFIED`);
+  alert(`💳 UPI Payment Successful!\nBank Ref: ${txnRef}\nStatus: SETTLED`);
   if (activePaymentCallback) {
     activePaymentCallback({ success: true, txnRef });
   }
 }
 
-// Integration into OPD Token Booking
 async function bookToken(doctorId, doctorName, fee) {
   launchUpiPaymentModal({
     amount: fee,
@@ -292,7 +411,7 @@ async function bookToken(doctorId, doctorName, fee) {
         body: JSON.stringify({
           doctorId,
           patientName: currentUser?.name || 'Patient',
-          patientPhone: '9876543210',
+          patientPhone: '+91 98765 43210',
           uhid: getActiveUhid(),
           amount: fee,
           paymentId: txnRef
@@ -304,7 +423,6 @@ async function bookToken(doctorId, doctorName, fee) {
   });
 }
 
-// Integration into Central Pharmacy Checkout
 function initiatePharmacyCheckout() {
   if (cart.length === 0) return alert('Cart empty');
   const total = cart.reduce((s, i) => s + (i.price * i.qty), 0);
@@ -328,7 +446,6 @@ function initiatePharmacyCheckout() {
   });
 }
 
-// Integration into Final Discharge Co-Pay Settle
 async function initiateDischargeUpiPayment() {
   const targetUhid = getActiveUhid();
   if (!lastCalculatedBill || lastCalculatedBill.uhid !== targetUhid) {
@@ -362,13 +479,13 @@ async function initiateDischargeUpiPayment() {
         lastCalculatedBill.claimId = res.claimId;
         lastCalculatedBill.dischargeDate = res.dischargeDate;
         document.getElementById('billInvoiceNo').innerText = res.billId;
-        alert(`✅ Discharge Settled!\nInvoice: ${res.billId}\nClaim: ${res.claimId || 'Direct UPI Cleared'}\nUPI Ref: ${txnRef}`);
+        alert(`✅ Discharge Settled!\nInvoice: ${res.billId}\nUPI Ref: ${txnRef}`);
       }
     }
   });
 }
 
-// ======================== SMART BEDSIDE WAVEFORM ENGINE ========================
+// Bedside Waveform Oscilloscope
 let ecgX = 0;
 let lastY = 45;
 function initEcgWaveform() {
@@ -403,7 +520,7 @@ function initEcgWaveform() {
   requestAnimationFrame(drawSweep);
 }
 
-// ======================== ABDM & ABHA SANDBOX ========================
+// ABDM Sandbox
 function getActiveUhid() {
   if (currentUser && currentUser.role === 'PATIENT') {
     const match = currentUser.department?.match(/PMCH-\d+/);
@@ -472,7 +589,7 @@ async function viewFhirBundle() {
   win.document.write(`<pre style="font-family: monospace; background: #0f172a; color: #38bdf8; padding: 20px;">${JSON.stringify(bundle, null, 2)}</pre>`);
 }
 
-// ======================== TPA INSURANCE DESK ========================
+// TPA Insurance Desk
 async function registerPatientInsurance() {
   const uhid = document.getElementById('insUhid')?.value.trim() || getActiveUhid();
   const tpaProvider = document.getElementById('insProvider').value;
@@ -512,7 +629,7 @@ async function loadInsuranceDossier(uhid) {
   }
 }
 
-// ======================== BILLING & PDF DOSSIER ========================
+// Billing & PDF Dossier
 async function calculateHospitalBill(optionalUhid) {
   const targetUhid = optionalUhid || document.getElementById('billingUhid')?.value?.trim() || getActiveUhid();
   const data = await (await fetch('/api/pmch/billing/summary/' + targetUhid)).json();
@@ -665,30 +782,106 @@ async function generatePrescription() {
   if (res.success) alert('Official Prescription Digitally Signed!');
 }
 
-// Authentication & Navigation Handlers
-function fillLogin(u, p) {
-  document.getElementById('loginUsername').value = u;
-  document.getElementById('loginPassword').value = p;
+// Authentication & Email/OTP Switcher
+let isOtpLogin = false;
+
+function toggleLoginMethod() {
+  isOtpLogin = !isOtpLogin;
+  const toggleBtn = document.getElementById('toggleLoginBtn');
+  const pwdBlock = document.getElementById('passwordInputBlock');
+  const otpBlock = document.getElementById('otpInputBlock');
+  const idLabel = document.getElementById('idFieldLabel');
+  const idInput = document.getElementById('loginUsername');
+
+  if (isOtpLogin) {
+    toggleBtn.innerText = 'Switch to Password Login';
+    idLabel.innerText = 'Registered Email Address:';
+    idInput.placeholder = 'Enter your email (e.g., patient@gmail.com)';
+    pwdBlock.style.display = 'none';
+    document.getElementById('loginPassword').removeAttribute('required');
+    otpBlock.style.display = 'block';
+  } else {
+    toggleBtn.innerText = 'Switch to Email OTP';
+    idLabel.innerText = 'Email Address or Username:';
+    idInput.placeholder = 'name@domain.com or username';
+    pwdBlock.style.display = 'block';
+    document.getElementById('loginPassword').setAttribute('required', 'true');
+    otpBlock.style.display = 'none';
+  }
+}
+
+async function requestLoginEmailOtp() {
+  const email = document.getElementById('loginUsername').value.trim();
+  if (!email || !email.includes('@')) {
+    return alert('Please enter a valid email address first.');
+  }
+  const res = await (await fetch('/api/pmch/auth/send-email-otp', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email })
+  })).json();
+
+  if (res.success) {
+    alert(res.message + '\n[DEMO CODE: ' + res.demoOtp + ']');
+    document.getElementById('loginOtpCode').value = res.demoOtp;
+  } else {
+    alert(res.error || 'Failed to send code.');
+  }
+}
+
+function fillLogin(role, pwd) {
+  const idInput = document.getElementById('loginUsername');
+  const pwdInput = document.getElementById('loginPassword');
+  if (role === 'admin') {
+    idInput.value = 'admin@panimalar.ac.in';
+    pwdInput.value = 'admin123';
+  } else if (role === 'doctor') {
+    idInput.value = 'suresh.kumar@panimalar.ac.in';
+    pwdInput.value = 'doctor123';
+  } else {
+    idInput.value = 'kavitha.patient@gmail.com';
+    pwdInput.value = 'patient123';
+  }
+  if (isOtpLogin) toggleLoginMethod();
 }
 
 async function handleLoginSubmit(e) {
   e.preventDefault();
-  const username = document.getElementById('loginUsername').value;
-  const password = document.getElementById('loginPassword').value;
+  const identifier = document.getElementById('loginUsername').value.trim();
 
-  const res = await (await fetch('/api/pmch/auth/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password })
-  })).json();
+  if (isOtpLogin) {
+    const otp = document.getElementById('loginOtpCode').value.trim();
+    if (!otp) return alert('Please enter the 6-digit OTP sent to your email.');
+    const res = await (await fetch('/api/pmch/auth/verify-email-otp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: identifier, otp })
+    })).json();
 
-  if (res.success) {
-    currentUser = res.user;
-    sessionStorage.setItem('pmch_user', JSON.stringify(currentUser));
-    document.getElementById('loginOverlay').style.display = 'none';
-    applyRolePermissions(currentUser);
+    if (res.success) {
+      currentUser = res.user;
+      sessionStorage.setItem('pmch_user', JSON.stringify(currentUser));
+      document.getElementById('loginOverlay').style.display = 'none';
+      applyRolePermissions(currentUser);
+    } else {
+      alert(res.error || 'OTP verification failed');
+    }
   } else {
-    alert(res.error || 'Authentication failed');
+    const password = document.getElementById('loginPassword').value;
+    const res = await (await fetch('/api/pmch/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: identifier, email: identifier, password })
+    })).json();
+
+    if (res.success) {
+      currentUser = res.user;
+      sessionStorage.setItem('pmch_user', JSON.stringify(currentUser));
+      document.getElementById('loginOverlay').style.display = 'none';
+      applyRolePermissions(currentUser);
+    } else {
+      alert(res.error || 'Authentication failed');
+    }
   }
 }
 
@@ -699,6 +892,8 @@ function applyRolePermissions(user) {
 
   const navAdmin = document.getElementById('nav-admin');
   const navTelemed = document.getElementById('nav-telemed');
+  const navAmbulance = document.getElementById('nav-ambulance');
+  const navAlerts = document.getElementById('nav-alerts');
   const navAbdm = document.getElementById('nav-abdm');
   const navInsurance = document.getElementById('nav-insurance');
   const navRx = document.getElementById('nav-rx');
@@ -714,21 +909,21 @@ function applyRolePermissions(user) {
   if (document.getElementById('abhaUhid')) document.getElementById('abhaUhid').value = activeUhid;
 
   if (user.role === 'ADMIN') {
-    [navAdmin, navTelemed, navAbdm, navInsurance, navRx, navOpd, navPharmacy, navIpd, navLims, navBilling].forEach(el => el.style.display = 'inline-block');
+    [navAdmin, navTelemed, navAmbulance, navAlerts, navAbdm, navInsurance, navRx, navOpd, navPharmacy, navIpd, navLims, navBilling].forEach(el => el.style.display = 'inline-block');
     switchTab('tab-admin');
   } else if (user.role === 'DOCTOR') {
     navAdmin.style.display = 'none';
     navInsurance.style.display = 'none';
     navPharmacy.style.display = 'none';
     navBilling.style.display = 'none';
-    [navOpd, navTelemed, navRx, navIpd, navLims, navAbdm].forEach(el => el.style.display = 'inline-block');
+    [navOpd, navTelemed, navAmbulance, navAlerts, navRx, navIpd, navLims, navAbdm].forEach(el => el.style.display = 'inline-block');
     switchTab('tab-opd');
   } else {
     navAdmin.style.display = 'none';
     navRx.style.display = 'none';
     navIpd.style.display = 'none';
     navLims.style.display = 'none';
-    [navOpd, navTelemed, navPharmacy, navBilling, navInsurance, navAbdm].forEach(el => el.style.display = 'inline-block');
+    [navOpd, navTelemed, navAmbulance, navAlerts, navPharmacy, navBilling, navInsurance, navAbdm].forEach(el => el.style.display = 'inline-block');
     switchTab('tab-opd');
   }
 
@@ -755,6 +950,11 @@ function switchTab(tabId) {
   if (btn) btn.classList.add('active');
 
   const activeUhid = getActiveUhid();
+  if (tabId === 'tab-ambulance') {
+    setTimeout(initAmbulanceMap, 200);
+    loadAmbulanceFleet();
+  }
+  if (tabId === 'tab-alerts') loadNotificationLogs();
   if (tabId === 'tab-pharmacy') { loadPharmacy(); loadBatches(); }
   if (tabId === 'tab-ipd') { loadIpdBeds(); setTimeout(initEcgWaveform, 150); }
   if (tabId === 'tab-lims') { loadLimsCatalog(); loadLimsWorklist(); }
@@ -868,7 +1068,6 @@ async function lookupPatientEhr() {
   `;
 }
 
-// Admin APIs
 async function loadAdminDropdowns() {
   const meds = await (await fetch('/api/pmch/pharmacy/catalog-list')).json();
   document.getElementById('admBatchMedSelect').innerHTML = meds.map(m => `<option value="${m.id}">${m.name}</option>`).join('');
