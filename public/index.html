@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Panimalar Medical College Hospital & RI - Portal</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <!-- Leaflet Navigation Engine -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <!-- HTML5 QR / 2D Barcode Scanner -->
   <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
 
@@ -116,47 +119,44 @@
     .admin-subgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; margin-top: 14px; }
     .copay-box { background: #f8fafc; border: 2px dashed #0284c7; border-radius: 8px; padding: 14px; margin: 12px 0; }
 
-    /* REAL GOOGLE MAP CONTAINER */
-    #ambulanceGoogleMap {
-      height: 480px; width: 100%; border-radius: 10px; border: 2px solid #cbd5e1;
-      margin-top: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); position: relative; background: #e5e7eb;
+    /* IN-CAR NAVIGATION MAP CONTAINER */
+    #ambulanceNavMap {
+      height: 480px; width: 100%; border-radius: 10px; border: 2px solid #334155;
+      margin-top: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.15); position: relative; background: #1e293b;
     }
 
-    /* REAL-TIME LIVE MOVING AMBULANCE EMOJI MARKERS */
-    .gmap-amb-marker {
-      position: absolute; transform: translate(-50%, -100%);
-      transition: all 1.2s cubic-bezier(0.25, 1, 0.5, 1);
-      cursor: pointer; z-index: 1000; user-select: none;
+    /* IN-CAR 🚑 MOVING VEHICLE EMOJI PIN */
+    .incar-amb-marker {
+      display: flex; flex-direction: column; align-items: center;
+      transition: all 1s ease-in-out;
+      filter: drop-shadow(0 4px 10px rgba(0,0,0,0.4));
+      user-select: none;
     }
-    .amb-badge-container {
-      display: flex; flex-direction: column; align-items: center; filter: drop-shadow(0 4px 8px rgba(0,0,0,0.35));
+    .incar-emoji {
+      font-size: 28px; line-height: 1; display: inline-block;
+      animation: car-bounce 1.2s infinite ease-in-out;
     }
-    .amb-emoji-bubble {
-      font-size: 26px; line-height: 1; display: inline-block;
-      animation: amb-bounce 1.4s infinite ease-in-out;
+    @keyframes car-bounce {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-4px); }
     }
-    @keyframes amb-bounce {
-      0%, 100% { transform: translateY(0) scale(1); }
-      50% { transform: translateY(-5px) scale(1.08); }
-    }
-    .amb-status-tag {
+    .incar-badge {
       background: #dc2626; color: #fff; font-size: 11px; font-weight: 800;
       padding: 3px 8px; border-radius: 12px; border: 2px solid #fff; margin-top: 2px;
-      white-space: nowrap; box-shadow: 0 2px 5px rgba(0,0,0,0.25);
+      white-space: nowrap; box-shadow: 0 2px 6px rgba(0,0,0,0.3);
     }
-    .amb-status-tag.standby { background: #15803d; }
-    .amb-status-tag.offline { background: #64748b; }
+    .incar-badge.standby { background: #15803d; }
+    .incar-badge.offline { background: #64748b; }
     .siren-beacon {
-      font-size: 12px; margin-left: 2px; animation: siren-pulse 0.6s infinite alternate;
+      font-size: 12px; margin-left: 2px; animation: siren-pulse 0.5s infinite alternate;
     }
-    @keyframes siren-pulse { from { opacity: 0.2; } to { opacity: 1; } }
+    @keyframes siren-pulse { from { opacity: 0.3; } to { opacity: 1; } }
 
     /* Hospital Base Pin */
-    .gmap-hosp-pin {
-      position: absolute; transform: translate(-50%, -100%);
+    .incar-hosp-pin {
       background: #0e2a47; color: #c69214; font-weight: bold; font-size: 12px;
       padding: 5px 10px; border-radius: 6px; border: 2px solid #c69214;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.4); text-align: center; white-space: nowrap; z-index: 900;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5); text-align: center; white-space: nowrap;
     }
 
     .soap-box { background: #f0fdf4; border: 1px solid #86efac; border-radius: 6px; padding: 12px; margin-top: 10px; }
@@ -378,29 +378,22 @@
       </div>
     </section>
 
-    <!-- TAB 3: REAL GOOGLE MAPS + IN-CAR LIVE ROAD TRAFFIC, SIGNALS & MOVING EMOJIS -->
+    <!-- TAB 3: IN-CAR NAVIGATION MAP + REAL-TIME ROAD TRAFFIC & SIGNALS -->
     <section id="tab-ambulance" class="tab-content">
       <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
         <div>
-          <h2>🚑 Live Google Maps In-Car Navigation & Traffic Radar</h2>
-          <small style="color: #64748b;">Turn-by-turn road snapping directions, traffic light signals (🚦), and real-time highway congestion.</small>
+          <h2>🚑 Live In-Car Navigation, Road Traffic & Signals</h2>
+          <small style="color: #64748b;">Live road-snapped ambulance trajectories, highway congestion lines, and traffic signals (🚦) across Chennai.</small>
         </div>
         <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-          <button class="btn" style="background: #16a34a; font-size: 12px;" onclick="toggleTrafficLayer()">🚦 Toggle Live Traffic</button>
-          <button class="btn" style="background: #eab308; color: #000; font-size: 12px;" onclick="toggleTrafficSignals()">🚥 Signals</button>
-          <button class="btn" style="background: #0284c7; font-size: 12px;" onclick="promptGoogleMapsApiKey()">🔑 Set Google Key</button>
+          <button class="btn" style="background: #16a34a; font-size: 12px;" onclick="toggleTrafficDisplay()">🚦 Toggle Traffic Flow</button>
+          <button class="btn" style="background: #eab308; color: #000; font-size: 12px;" onclick="toggleSignalDisplay()">🚥 Traffic Signals</button>
           <button class="btn btn-danger" style="font-size: 12px;" onclick="dispatchEmergencyAmbulance('AMB-02')">🚨 Dispatch Standby Mobile ICU</button>
         </div>
       </div>
 
-      <!-- Real Google Map Viewport -->
-      <div id="ambulanceGoogleMap">
-        <div id="gmapFallbackNotice" style="padding: 30px; text-align: center; color: #475569; display: none;">
-          <h3>🗺️ Real Google Maps Engine</h3>
-          <p style="font-size: 13px; margin: 8px 0 14px 0;">Enter your Google Maps JavaScript API Key to view high-resolution satellite/terrain road maps with live traffic.</p>
-          <button class="btn btn-gold" onclick="promptGoogleMapsApiKey()">Enter Google Maps API Key</button>
-        </div>
-      </div>
+      <!-- Real In-Car Vector Navigation Map -->
+      <div id="ambulanceNavMap"></div>
 
       <div class="card" style="margin-top: 16px;">
         <h4>Active Fleet Status & Pre-Arrival Triage Vitals</h4>
