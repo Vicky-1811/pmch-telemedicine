@@ -5,9 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Panimalar Medical College Hospital & RI - Portal</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-  <!-- Leaflet.js Map CSS & JS -->
+  <!-- Leaflet Map CSS & JS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <!-- HTML5 QR / 2D Barcode Scanner -->
+  <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
 
   <style>
     :root {
@@ -28,6 +30,12 @@
     }
     @keyframes flash-red { from { background: #dc2626; } to { background: #7f1d1d; } }
 
+    /* FEATURE 1: Paramedic Pre-Arrival Alert Strip */
+    #traumaAlertBanner {
+      display: none; background: #b91c1c; color: #fff; padding: 12px 18px;
+      font-weight: bold; font-size: 14px; text-align: center; border-bottom: 3px solid #facc15;
+    }
+
     #whatsappLiveToast {
       position: fixed; top: 20px; right: 20px; z-index: 999999; display: none;
       background: #075e54; color: #fff; width: 340px; border-radius: 8px;
@@ -36,17 +44,14 @@
     }
     @keyframes slide-in { from { transform: translateX(100%); } to { transform: translateX(0); } }
 
-    #upiModalOverlay {
+    #upiModalOverlay, #paramedicModalOverlay {
       position: fixed; top: 0; left: 0; width: 100%; height: 100%;
       background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(4px);
       z-index: 99999; display: none; justify-content: center; align-items: center; padding: 16px;
     }
-    .upi-checkout-card {
+    .modal-card {
       background: #fff; width: 100%; max-width: 440px; border-radius: 12px;
-      box-shadow: 0 25px 50px rgba(0,0,0,0.3); border-top: 6px solid #22c55e; padding: 24px; text-align: center;
-    }
-    .upi-qr-frame {
-      display: inline-block; padding: 12px; background: #fff; border: 2px dashed #0284c7; border-radius: 8px; margin: 12px 0;
+      box-shadow: 0 25px 50px rgba(0,0,0,0.3); padding: 24px; text-align: center;
     }
 
     #loginOverlay {
@@ -115,6 +120,11 @@
     .admin-subgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; margin-top: 14px; }
     .copay-box { background: #f8fafc; border: 2px dashed #0284c7; border-radius: 8px; padding: 14px; margin: 12px 0; }
     #ambulanceMap { height: 420px; width: 100%; border-radius: 8px; border: 2px solid #cbd5e1; margin-top: 12px; }
+
+    /* FEATURE 2: Voice Scribe Styling */
+    .soap-box { background: #f0fdf4; border: 1px solid #86efac; border-radius: 6px; padding: 12px; margin-top: 10px; }
+    .recording-pulse { animation: rec-pulse 1s infinite alternate; }
+    @keyframes rec-pulse { from { background: #dc2626; color: #fff; } to { background: #f87171; color: #fff; } }
   </style>
 </head>
 <body>
@@ -123,6 +133,14 @@
   <div id="codeBlueBanner">
     🚨 CODE BLUE ALERT! Bed <span id="cbBed">BED-ICU-01</span> (<span id="cbLoc">Trauma ICU</span>) — SPO2: <span id="cbSpo2">84%</span> | CRITICAL DESATURATION.
     <button onclick="dismissCodeBlue()" style="margin-left: 15px; padding: 3px 8px; font-size: 11px; background: #fff; color: #000; border: none; border-radius: 3px; cursor: pointer;">Acknowledge</button>
+  </div>
+
+  <!-- FEATURE 1: TRAUMA EN-ROUTE ALERT STRIP -->
+  <div id="traumaAlertBanner">
+    🚑 TRAUMA BAY ALERT: <span id="traumaAmbId">AMB-01</span> arriving in <span id="traumaEta">6</span> mins! 
+    Trauma: <span id="traumaType">Blunt Trauma</span> | SpO2: <span id="traumaSpo2">94%</span> | HR: <span id="traumaHr">104</span> BPM. 
+    <span id="traumaBedNotice" style="color: #fef08a; font-weight: bold; margin-left: 10px;">ICU Bed Pre-Reserved.</span>
+    <button onclick="document.getElementById('traumaAlertBanner').style.display='none'" style="margin-left: 10px; padding: 2px 6px; font-size: 10px; border-radius: 3px; border:none; cursor:pointer;">Dismiss</button>
   </div>
 
   <!-- WHATSAPP NOTIFICATION TOAST -->
@@ -137,12 +155,57 @@
     </div>
   </div>
 
+  <!-- FEATURE 1: PARAMEDIC EN-ROUTE VITALS INPUT MODAL -->
+  <div id="paramedicModalOverlay">
+    <div class="modal-card" style="border-top: 6px solid #dc2626;">
+      <h3 style="color: var(--pmch-navy);">🚑 Paramedic En-Route Triage Vitals</h3>
+      <p style="font-size: 12px; color: #64748b; margin-bottom: 12px;">Transmitting live trauma data directly to PMCH Level 1 Trauma Bay</p>
+      
+      <input type="hidden" id="paramedicAmbId" />
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; text-align: left;">
+        <div>
+          <label style="font-size: 11px; font-weight: bold;">GCS Score (3-15):</label>
+          <input type="number" id="paramedicGcs" value="14" min="3" max="15" />
+        </div>
+        <div>
+          <label style="font-size: 11px; font-weight: bold;">Heart Rate (BPM):</label>
+          <input type="number" id="paramedicHr" value="112" />
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; text-align: left;">
+        <div>
+          <label style="font-size: 11px; font-weight: bold;">SpO2 (% Saturation):</label>
+          <input type="number" id="paramedicSpo2" value="91" />
+        </div>
+        <div>
+          <label style="font-size: 11px; font-weight: bold;">Trauma Classification:</label>
+          <select id="paramedicTrauma">
+            <option value="Blunt Road Trauma">Blunt Road Trauma</option>
+            <option value="Severe Polytrauma">Severe Polytrauma</option>
+            <option value="Acute STEMI / Cardiac">Acute STEMI / Cardiac</option>
+            <option value="Respiratory Distress">Respiratory Distress</option>
+          </select>
+        </div>
+      </div>
+
+      <label style="font-size: 12px; display: flex; align-items: center; gap: 6px; margin: 8px 0; cursor: pointer;">
+        <input type="checkbox" id="paramedicAutoIcu" checked /> 🚨 Auto-reserve ICU Bed at PMCH
+      </label>
+
+      <div style="display: flex; gap: 8px; margin-top: 10px;">
+        <button class="btn btn-danger" style="flex: 2;" onclick="submitParamedicTriage()">📡 Transmit to Trauma Bay</button>
+        <button class="btn" style="flex: 1; background: #64748b;" onclick="closeParamedicModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
   <!-- UPI PAYMENT MODAL -->
   <div id="upiModalOverlay">
-    <div class="upi-checkout-card">
+    <div class="modal-card" style="border-top: 6px solid #22c55e;">
       <h3 style="color: var(--pmch-navy); margin-bottom: 2px;">PMCH Secure UPI Gateway</h3>
       <small style="color: #64748b;">Instant National UPI Adjudication (GPay, PhonePe, Paytm)</small>
-      <div class="upi-qr-frame">
+      <div style="display: inline-block; padding: 12px; background: #fff; border: 2px dashed #0284c7; border-radius: 8px; margin: 12px 0;">
         <img id="upiQrImage" src="" alt="Scan UPI QR" style="width: 220px; height: 220px; display: block;" />
       </div>
       <p style="font-size: 13px; font-weight: bold;">Amount Payable: <span id="upiPayAmount" style="color: var(--pmch-green); font-size: 18px;">₹0.00</span></p>
@@ -225,7 +288,7 @@
         <button class="nav-btn" id="nav-telemed" onclick="switchTab('tab-telemed')">📹 Telemedicine Room</button>
         <button class="nav-btn" id="nav-ambulance" onclick="switchTab('tab-ambulance')">🚑 Ambulance GPS Fleet</button>
         <button class="nav-btn" id="nav-rx" onclick="switchTab('tab-rx')">Clinical AI & E-Prescription</button>
-        <button class="nav-btn" id="nav-pharmacy" onclick="switchTab('tab-pharmacy')">Central Pharmacy (FEFO)</button>
+        <button class="nav-btn" id="nav-pharmacy" onclick="switchTab('tab-pharmacy')">Central Pharmacy & FEFO</button>
         <button class="nav-btn" id="nav-ipd" onclick="switchTab('tab-ipd')">IPD Wards & Telemetry</button>
         <button class="nav-btn" id="nav-lims" onclick="switchTab('tab-lims')">Diagnostic Lab</button>
         <button class="nav-btn" id="nav-alerts" onclick="switchTab('tab-alerts')">📲 WhatsApp Alert Center</button>
@@ -239,7 +302,7 @@
   </header>
 
   <div class="container">
-    <!-- TAB 1: OPD DOCTORS & BILINGUAL CALLER -->
+    <!-- TAB 1: OPD DOCTORS -->
     <section id="tab-opd" class="tab-content active">
       <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">
         <h2>OPD Specialist Consultations & Live Queue</h2>
@@ -251,7 +314,7 @@
       <div id="doctorList" class="card-grid"></div>
     </section>
 
-    <!-- TAB 2: WEBRTC VIDEO CONSULTATION ROOM -->
+    <!-- TAB 2: WEBRTC VIDEO -->
     <section id="tab-telemed" class="tab-content">
       <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">
         <h2>📹 Telemedicine P2P WebRTC Video Consultation Suite</h2>
@@ -297,9 +360,31 @@
       </div>
     </section>
 
-    <!-- TAB 4: CLINICAL AI & E-PRESCRIPTION -->
+    <!-- TAB 4: CLINICAL AI & E-PRESCRIPTION + FEATURE 2: VOICE SOAP SCRIBE -->
     <section id="tab-rx" class="tab-content">
-      <h2>Doctor Clinical E-Prescription Desk & AI Interaction Co-Pilot</h2>
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap;">
+        <h2>Doctor Clinical E-Prescription Desk & AI Co-Pilot</h2>
+        <!-- FEATURE 2 VOICE BUTTON -->
+        <button class="btn" id="btnVoiceScribe" style="background:#be123c;" onclick="toggleVoiceSoapScribe()">🎙️ Start AI Voice-to-SOAP Scribe</button>
+      </div>
+
+      <!-- FEATURE 2 SOAP CARD -->
+      <div id="soapCard" class="card soap-box" style="display:none; margin: 12px 0;">
+        <div style="display:flex; justify-content:space-between;">
+          <strong style="color: #15803d;">🩺 AI Ambient Voice-to-SOAP Clinical Scribe</strong>
+          <span id="scribeLiveStatus" class="badge badge-danger">LISTENING...</span>
+        </div>
+        <p style="font-size:12px; color:#475569; margin: 4px 0 10px 0;">Speaking will dynamically populate Subjective, Objective, Assessment, and Plan below:</p>
+        
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+          <div><strong>Subjective (Symptoms):</strong><textarea id="soapSubjective" rows="2" style="margin:2px 0 6px 0;"></textarea></div>
+          <div><strong>Objective (Observations):</strong><textarea id="soapObjective" rows="2" style="margin:2px 0 6px 0;"></textarea></div>
+          <div><strong>Assessment (Diagnosis):</strong><textarea id="soapAssessment" rows="2" style="margin:2px 0 6px 0;"></textarea></div>
+          <div><strong>Plan (Medications & Dosing):</strong><textarea id="soapPlan" rows="2" style="margin:2px 0 6px 0;"></textarea></div>
+        </div>
+        <button class="btn btn-gold" style="margin-top: 8px;" onclick="applySoapToPrescription()">📋 Transfer Plan into Prescription Form</button>
+      </div>
+
       <div class="card" style="max-width: 650px;">
         <input type="text" id="rxUhid" placeholder="Patient UHID" value="PMCH-80097" />
         <input type="text" id="rxDoctor" placeholder="Consulting Doctor" value="Dr. Suresh Kumar S." />
@@ -326,24 +411,40 @@
       </div>
     </section>
 
-    <!-- TAB 5: PHARMACY -->
+    <!-- TAB 5: PHARMACY + FEATURE 3: GS1 BARCODE SCANNER -->
     <section id="tab-pharmacy" class="tab-content">
-      <div style="display: flex; justify-content: space-between; align-items: center;">
-        <h2>Central Pharmacy (FEFO Controlled)</h2>
-        <button class="btn btn-gold" onclick="initiatePharmacyCheckout()">Pay via UPI & Order (<span id="cartCount">0</span>)</button>
+      <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap:wrap;">
+        <h2>Central Pharmacy & FEFO Dispensing</h2>
+        <div style="display:flex; gap:8px;">
+          <!-- FEATURE 3 SCANNER BUTTON -->
+          <button class="btn" style="background: #0284c7;" onclick="toggleBarcodeScanner()">📷 Scan 2D Medicine Barcode</button>
+          <button class="btn btn-gold" onclick="initiatePharmacyCheckout()">Pay via UPI & Order (<span id="cartCount">0</span>)</button>
+        </div>
       </div>
+
+      <!-- FEATURE 3 SCANNER INTERFACE -->
+      <div id="barcodeScannerBox" class="card" style="display:none; max-width: 500px; margin: 12px 0;">
+        <h4>📷 Webcam GS1 / 2D DataMatrix Medicine Scanner</h4>
+        <div id="scannerReader" style="width: 100%; min-height: 250px; background:#000; margin: 10px 0; border-radius:6px;"></div>
+        <div style="display:flex; gap:8px;">
+          <input type="text" id="manualBarcodeInput" placeholder="Or enter barcode manually (e.g. 890103000101)" />
+          <button class="btn btn-gold" style="width: 100px;" onclick="verifyScannedBarcode(document.getElementById('manualBarcodeInput').value)">Verify</button>
+        </div>
+        <div id="scanResultMsg" style="margin-top: 10px; font-size: 13px; font-weight: bold;"></div>
+      </div>
+
       <div id="pharmacyList" class="card-grid"></div>
 
       <div class="card" style="margin-top: 20px;">
-        <h4>Live Warehouse Batch Inventory</h4>
+        <h4>Live Warehouse Batch Inventory (Barcode & FEFO Tracked)</h4>
         <table>
-          <thead><tr><th>Medicine</th><th>Batch No</th><th>Expiry Date</th><th>Unit Price</th><th>Stock</th><th>Status</th></tr></thead>
+          <thead><tr><th>Medicine</th><th>Batch No</th><th>Barcode GTIN</th><th>Expiry Date</th><th>Unit Price</th><th>Stock</th><th>Status</th></tr></thead>
           <tbody id="batchTableBody"></tbody>
         </table>
       </div>
     </section>
 
-    <!-- TAB 6: IPD & SMART OSCILLOSCOPE -->
+    <!-- TAB 6: IPD WARDS -->
     <section id="tab-ipd" class="tab-content">
       <div style="display: flex; justify-content: space-between; align-items: center;">
         <h2>IPD Ward Management & Bedside IoT Telemetry</h2>
@@ -514,6 +615,7 @@
           <input type="text" id="admMedName" placeholder="Drug Name" />
           <input type="text" id="admMedCategory" placeholder="Category" />
           <input type="text" id="admMedBatch" placeholder="Batch No" />
+          <input type="text" id="admMedBarcode" placeholder="Barcode GTIN (e.g. 890103000101)" />
           <input type="date" id="admMedExpiry" value="2027-06-30" />
           <input type="number" id="admMedPrice" placeholder="Unit Price (₹)" value="85" />
           <input type="number" id="admMedStock" placeholder="Stock Qty" value="50" />
@@ -524,6 +626,7 @@
           <h4>📦 Receive New Stock Batch</h4>
           <select id="admBatchMedSelect"></select>
           <input type="text" id="admBatchNum" placeholder="Batch No" />
+          <input type="text" id="admBatchBarcode" placeholder="Barcode Data" />
           <input type="date" id="admBatchExpiry" value="2027-12-31" />
           <input type="number" id="admBatchPrice" placeholder="Price (₹)" value="25" />
           <input type="number" id="admBatchStock" placeholder="Quantity" value="100" />

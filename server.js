@@ -60,6 +60,7 @@ db.exec(`
     expiry_date DATE NOT NULL,
     unit_price REAL NOT NULL,
     current_stock INTEGER NOT NULL,
+    barcode_data TEXT,
     status TEXT DEFAULT 'ACTIVE',
     FOREIGN KEY (medicine_id) REFERENCES medicines(id)
   );
@@ -178,7 +179,11 @@ db.exec(`
     lng REAL NOT NULL,
     target_destination TEXT,
     eta_mins INTEGER DEFAULT 0,
-    patient_vitals_summary TEXT
+    patient_vitals_summary TEXT,
+    triage_gcs INTEGER DEFAULT 15,
+    triage_hr INTEGER DEFAULT 75,
+    triage_spo2 INTEGER DEFAULT 98,
+    trauma_category TEXT DEFAULT 'Non-Trauma'
   );
 
   CREATE TABLE IF NOT EXISTS notification_logs (
@@ -212,7 +217,16 @@ db.exec(`
   );
 `);
 
-// Migrations
+// Safe Migrations
+const ambCols = db.prepare('PRAGMA table_info(ambulance_fleet)').all().map(c => c.name);
+if (!ambCols.includes('triage_gcs')) db.exec('ALTER TABLE ambulance_fleet ADD COLUMN triage_gcs INTEGER DEFAULT 15;');
+if (!ambCols.includes('triage_hr')) db.exec('ALTER TABLE ambulance_fleet ADD COLUMN triage_hr INTEGER DEFAULT 75;');
+if (!ambCols.includes('triage_spo2')) db.exec('ALTER TABLE ambulance_fleet ADD COLUMN triage_spo2 INTEGER DEFAULT 98;');
+if (!ambCols.includes('trauma_category')) db.exec("ALTER TABLE ambulance_fleet ADD COLUMN trauma_category TEXT DEFAULT 'Non-Trauma';");
+
+const batchCols = db.prepare('PRAGMA table_info(medicine_batches)').all().map(c => c.name);
+if (!batchCols.includes('barcode_data')) db.exec('ALTER TABLE medicine_batches ADD COLUMN barcode_data TEXT;');
+
 const billCols = db.prepare('PRAGMA table_info(discharge_bills)').all().map(c => c.name);
 if (!billCols.includes('insurance_paid')) db.exec('ALTER TABLE discharge_bills ADD COLUMN insurance_paid REAL DEFAULT 0');
 if (!billCols.includes('copay_paid')) db.exec('ALTER TABLE discharge_bills ADD COLUMN copay_paid REAL DEFAULT 0');
@@ -221,7 +235,7 @@ if (!billCols.includes('tpa_ref')) db.exec("ALTER TABLE discharge_bills ADD COLU
 const userCols = db.prepare('PRAGMA table_info(users)').all().map(c => c.name);
 if (!userCols.includes('email')) db.exec('ALTER TABLE users ADD COLUMN email TEXT;');
 
-// Seed Initial Users
+// Seed Users
 const users = [
   ['usr-admin', 'admin', 'admin@panimalar.ac.in', 'admin123', 'ADMIN', 'Dr. Radhakrishnan (Medical Supt.)', 'Administration'],
   ['usr-doc', 'doctor', 'suresh.kumar@panimalar.ac.in', 'doctor123', 'DOCTOR', 'Dr. Suresh Kumar S.', 'General Medicine'],
@@ -239,7 +253,7 @@ const doctors = [
 const insDoc = db.prepare('INSERT OR REPLACE INTO doctors VALUES (?, ?, ?, ?, ?, ?, ?)');
 doctors.forEach(d => insDoc.run(...d));
 
-// Seed Medicines & Initial Batches
+// Seed Medicines & Batches with Barcodes
 const meds = [
   ['pmch-med-1', 'Paracetamol 650mg (Dolo)', 'Analgesic', 20, 100, 0],
   ['pmch-med-2', 'Azithromycin 500mg', 'Antibiotic', 15, 60, 1],
@@ -252,17 +266,17 @@ meds.forEach(m => insMed.run(...m));
 const batchCount = db.prepare('SELECT COUNT(*) as c FROM medicine_batches').get().c;
 if (batchCount === 0) {
   const batches = [
-    ['pmch-med-1', 'PMCH-DOLO-A1', '2026-11-15', 25.0, 20, 'ACTIVE'],
-    ['pmch-med-1', 'PMCH-DOLO-B2', '2027-08-20', 25.0, 150, 'ACTIVE'],
-    ['pmch-med-2', 'PMCH-AZI-901', '2026-12-01', 95.0, 10, 'ACTIVE'],
-    ['pmch-med-3', 'PMCH-WARF-01', '2027-03-10', 45.0, 30, 'ACTIVE'],
-    ['pmch-med-4', 'PMCH-ASP-102', '2027-04-15', 20.0, 80, 'ACTIVE']
+    ['pmch-med-1', 'PMCH-DOLO-A1', '2026-11-15', 25.0, 20, '890103000101', 'ACTIVE'],
+    ['pmch-med-1', 'PMCH-DOLO-B2', '2027-08-20', 25.0, 150, '890103000102', 'ACTIVE'],
+    ['pmch-med-2', 'PMCH-AZI-901', '2026-12-01', 95.0, 10, '890103000201', 'ACTIVE'],
+    ['pmch-med-3', 'PMCH-WARF-01', '2027-03-10', 45.0, 30, '890103000301', 'ACTIVE'],
+    ['pmch-med-4', 'PMCH-ASP-102', '2027-04-15', 20.0, 80, '890103000401', 'ACTIVE']
   ];
-  const insBatch = db.prepare('INSERT INTO medicine_batches (medicine_id, batch_number, expiry_date, unit_price, current_stock, status) VALUES (?, ?, ?, ?, ?, ?)');
+  const insBatch = db.prepare('INSERT INTO medicine_batches (medicine_id, batch_number, expiry_date, unit_price, current_stock, barcode_data, status) VALUES (?, ?, ?, ?, ?, ?, ?)');
   batches.forEach(b => insBatch.run(...b));
 }
 
-// Seed Beds & Diagnostics
+// Seed Beds & Labs
 const beds = [
   ['BED-ICU-01', 'Critical Care ICU', 'Trauma Tower - 1st Floor', 3500.0, 'OCCUPIED', 'PMCH-80097', '2026-09-27 08:30:00'],
   ['BED-ICU-02', 'Critical Care ICU', 'Trauma Tower - 1st Floor', 3500.0, 'VACANT', null, null],
@@ -288,11 +302,11 @@ db.prepare('INSERT OR REPLACE INTO abha_identities VALUES (?, ?, ?, ?, ?, ?, CUR
 
 // Seed Ambulance Fleet
 const fleet = [
-  ['AMB-01', 'TN-02-AZ-9901', 'M. Murugan', '+91 94441 23456', 'DISPATCHED', 13.0450, 80.0880, 'PMCH Trauma Tower', 6, 'HR: 104 | SpO2: 94%'],
-  ['AMB-02', 'TN-02-BC-4412', 'K. Saravanan', '+91 98840 98765', 'AVAILABLE', 13.0382, 80.1565, 'Porur Junction', 0, 'Standby - Mobile ICU'],
-  ['AMB-03', 'TN-02-CX-1088', 'P. Vinoth', '+91 97910 11223', 'MAINTENANCE', 13.0610, 80.0520, 'PMCH Garage Bay', 0, 'Vehicle Under Service / Offline']
+  ['AMB-01', 'TN-02-AZ-9901', 'M. Murugan', '+91 94441 23456', 'DISPATCHED', 13.0450, 80.0880, 'PMCH Trauma Tower', 6, 'HR: 104 | SpO2: 94%', 14, 104, 94, 'Blunt Trauma'],
+  ['AMB-02', 'TN-02-BC-4412', 'K. Saravanan', '+91 98840 98765', 'AVAILABLE', 13.0382, 80.1565, 'Porur Junction', 0, 'Standby - Mobile ICU', 15, 76, 99, 'Non-Trauma'],
+  ['AMB-03', 'TN-02-CX-1088', 'P. Vinoth', '+91 97910 11223', 'MAINTENANCE', 13.0610, 80.0520, 'PMCH Garage Bay', 0, 'Vehicle Under Service / Offline', 15, 0, 0, 'Non-Trauma']
 ];
-const insFleet = db.prepare('INSERT OR REPLACE INTO ambulance_fleet VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+const insFleet = db.prepare('INSERT OR REPLACE INTO ambulance_fleet VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
 fleet.forEach(f => insFleet.run(...f));
 
 // Live GPS Simulation
@@ -315,7 +329,11 @@ setInterval(() => {
       lng: newLng,
       etaMins: newEta,
       status: amb.status,
-      vitalsSummary: amb.patient_vitals_summary
+      vitalsSummary: amb.patient_vitals_summary,
+      triageGcs: amb.triage_gcs,
+      triageHr: amb.triage_hr,
+      triageSpo2: amb.triage_spo2,
+      traumaCategory: amb.trauma_category
     });
   });
 }, 3000);
@@ -368,7 +386,99 @@ app.post('/api/pmch/telemetry/trigger-code-blue', (req, res) => {
   res.json({ success: true });
 });
 
-// OPD Queue Advancement & WhatsApp Proximity Trigger
+// FEATURE 1: Paramedic Pre-Arrival En-Route Vitals Scribe & Emergency ICU Pre-Reservation
+app.post('/api/pmch/ambulance/triage-update', (req, res) => {
+  try {
+    const { id, gcs, hr, spo2, traumaCategory, autoReserveIcu } = req.body;
+    const numGcs = parseInt(gcs) || 15;
+    const numHr = parseInt(hr) || 80;
+    const numSpo2 = parseInt(spo2) || 98;
+    const trauma = traumaCategory || 'Trauma Resuscitation';
+
+    const vitalsSummary = `GCS: ${numGcs} | HR: ${numHr} | SpO2: ${numSpo2}% [${trauma}]`;
+
+    db.prepare(`
+      UPDATE ambulance_fleet 
+      SET triage_gcs = ?, triage_hr = ?, triage_spo2 = ?, trauma_category = ?, patient_vitals_summary = ?
+      WHERE id = ?
+    `).run(numGcs, numHr, numSpo2, trauma, vitalsSummary, id);
+
+    const isCritical = numSpo2 < 90 || numHr > 120 || numGcs < 9;
+    let reservedBedId = null;
+
+    if (autoReserveIcu || isCritical) {
+      const vacantBed = db.prepare("SELECT bed_id FROM hospital_beds WHERE ward_type LIKE '%ICU%' AND status = 'VACANT' LIMIT 1").get();
+      if (vacantBed) {
+        reservedBedId = vacantBed.bed_id;
+        db.prepare("UPDATE hospital_beds SET status = 'RESERVED', assigned_uhid = 'EN-ROUTE-PARAMEDIC', admitted_at = CURRENT_TIMESTAMP WHERE bed_id = ?").run(reservedBedId);
+      }
+    }
+
+    const updated = db.prepare('SELECT * FROM ambulance_fleet WHERE id = ?').get(id);
+
+    // Broadcast Real-time Code Red / Yellow Banner
+    io.emit('trauma-triage-alert', {
+      ambulanceId: id,
+      vehicleNo: updated.vehicle_no,
+      driverName: updated.driver_name,
+      etaMins: updated.eta_mins,
+      gcs: numGcs,
+      hr: numHr,
+      spo2: numSpo2,
+      traumaCategory: trauma,
+      isCritical,
+      reservedBedId
+    });
+
+    io.emit('ambulance-telemetry-update', updated);
+    res.json({ success: true, isCritical, reservedBedId, ambulance: updated });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// FEATURE 3: GS1 / 2D Barcode Verification & FEFO Audit
+app.post('/api/pmch/pharmacy/verify-barcode', (req, res) => {
+  try {
+    const { barcode } = req.body;
+    const trimmed = (barcode || '').trim();
+
+    // Match batch by scanned barcode or batch number
+    const batch = db.prepare(`
+      SELECT b.*, m.name as medicine_name 
+      FROM medicine_batches b 
+      JOIN medicines m ON b.medicine_id = m.id 
+      WHERE b.barcode_data = ? OR b.batch_number = ?
+    `).get(trimmed, trimmed);
+
+    if (!batch) {
+      return res.status(404).json({ success: false, message: `No active medicine found for barcode: ${trimmed}` });
+    }
+
+    // Check FEFO Compliance (is there an earlier expiring active batch for this drug?)
+    const earliestBatch = db.prepare(`
+      SELECT * FROM medicine_batches 
+      WHERE medicine_id = ? AND current_stock > 0 AND expiry_date > DATE('now')
+      ORDER BY expiry_date ASC LIMIT 1
+    `).get(batch.medicine_id);
+
+    const isFefoCompliant = earliestBatch ? earliestBatch.id === batch.id : true;
+
+    res.json({
+      success: true,
+      scannedBatch: batch,
+      isFefoCompliant,
+      recommendedBatch: earliestBatch,
+      message: isFefoCompliant 
+        ? `✅ FEFO Validated: Batch ${batch.batch_number} is the earliest expiring stock.` 
+        : `⚠️ FEFO VIOLATION: Batch ${earliestBatch.batch_number} expires earlier (${earliestBatch.expiry_date})! Dispense that first.`
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Queue Advancement
 const handleQueueAdvance = (req, res) => {
   try {
     const doctorId = req.body?.doctorId || req.query?.doctorId || 'pmch-101';
@@ -831,19 +941,19 @@ app.post('/api/pmch/billing/settle-discharge', (req, res) => {
 
 // Admin Operations
 app.post('/api/pmch/admin/add-medicine', (req, res) => {
-  const { name, category, batchNumber, expiryDate, unitPrice, stock } = req.body;
+  const { name, category, batchNumber, expiryDate, unitPrice, stock, barcode } = req.body;
   const medId = 'pmch-med-' + Date.now();
   db.prepare('INSERT INTO medicines (id, name, category, reorder_level, reorder_qty, requires_rx) VALUES (?, ?, ?, 20, 100, 1)').run(medId, name, category);
-  db.prepare("INSERT INTO medicine_batches (medicine_id, batch_number, expiry_date, unit_price, current_stock, status) VALUES (?, ?, ?, ?, ?, 'ACTIVE')").run(
-    medId, batchNumber, expiryDate, parseFloat(unitPrice) || 25, parseInt(stock) || 50
+  db.prepare("INSERT INTO medicine_batches (medicine_id, batch_number, expiry_date, unit_price, current_stock, barcode_data, status) VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE')").run(
+    medId, batchNumber, expiryDate, parseFloat(unitPrice) || 25, parseInt(stock) || 50, barcode || ('8901' + Date.now().toString().slice(-8))
   );
-  res.json({ success: true, message: `Medicine '${name}' registered!` });
+  res.json({ success: true, message: `Medicine '${name}' registered with Barcode!` });
 });
 
 app.post('/api/pmch/admin/add-batch', (req, res) => {
-  const { medicineId, batchNumber, expiryDate, unitPrice, stock } = req.body;
-  db.prepare("INSERT INTO medicine_batches (medicine_id, batch_number, expiry_date, unit_price, current_stock, status) VALUES (?, ?, ?, ?, ?, 'ACTIVE')").run(
-    medicineId, batchNumber, expiryDate, parseFloat(unitPrice) || 25, parseInt(stock) || 50
+  const { medicineId, batchNumber, expiryDate, unitPrice, stock, barcode } = req.body;
+  db.prepare("INSERT INTO medicine_batches (medicine_id, batch_number, expiry_date, unit_price, current_stock, barcode_data, status) VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE')").run(
+    medicineId, batchNumber, expiryDate, parseFloat(unitPrice) || 25, parseInt(stock) || 50, barcode || ('8901' + Date.now().toString().slice(-8))
   );
   res.json({ success: true, message: `Batch '${batchNumber}' inwarded!` });
 });
@@ -893,6 +1003,5 @@ app.use((err, req, res, next) => {
   res.status(500).json({ success: false, error: err.message || 'Internal Server Error' });
 });
 
-// Dynamic Port Binding for Render
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, '0.0.0.0', () => console.log('PMCH Unified Server Active on port ' + PORT));

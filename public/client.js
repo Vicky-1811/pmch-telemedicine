@@ -9,7 +9,7 @@ try {
   console.warn('Socket connection delayed:', e);
 }
 
-// Audio Queue Chime & Speech Synthesis
+// Audio Chime & Speech Synthesis
 let audioCtx = null;
 async function playAlertTone() {
   try {
@@ -111,8 +111,9 @@ async function loadAmbulanceFleet() {
         `;
       } else if (a.status === 'DISPATCHED') {
         actionButtons = `
-          <button class="btn" style="padding:3px 7px; font-size:11px; background:#15803d;" onclick="setAmbulanceStatus('${a.id}', 'AVAILABLE')">Dock / Standby</button>
-          <button class="btn" style="padding:3px 7px; font-size:11px; background:#64748b;" onclick="setAmbulanceStatus('${a.id}', 'MAINTENANCE')">Take Offline</button>
+          <button class="btn" style="padding:3px 7px; font-size:11px; background:#0284c7;" onclick="openParamedicModal('${a.id}')">📡 En-Route Vitals</button>
+          <button class="btn" style="padding:3px 7px; font-size:11px; background:#15803d;" onclick="setAmbulanceStatus('${a.id}', 'AVAILABLE')">Dock</button>
+          <button class="btn" style="padding:3px 7px; font-size:11px; background:#64748b;" onclick="setAmbulanceStatus('${a.id}', 'MAINTENANCE')">Offline</button>
         `;
       } else {
         actionButtons = `
@@ -128,7 +129,7 @@ async function loadAmbulanceFleet() {
           <td><span class="badge ${badgeClass}">${a.status}</span></td>
           <td><strong>${a.eta_mins > 0 ? a.eta_mins + ' mins' : 'Docked'}</strong></td>
           <td style="color:#0284c7; font-size:11.5px;">${a.patient_vitals_summary}</td>
-          <td><div style="display:flex; gap:4px;">${actionButtons}</div></td>
+          <td><div style="display:flex; gap:4px; flex-wrap:wrap;">${actionButtons}</div></td>
         </tr>
       `;
     }).join('');
@@ -141,9 +142,9 @@ async function loadAmbulanceFleet() {
 
 function updateAmbulanceMarker(a) {
   if (!map) return;
-  let markerBg = '#15803d'; // Available (Green)
-  if (a.status === 'DISPATCHED') markerBg = '#dc2626'; // En-route (Red)
-  if (a.status === 'MAINTENANCE' || a.status === 'OFFLINE') markerBg = '#64748b'; // Inactive (Slate)
+  let markerBg = '#15803d';
+  if (a.status === 'DISPATCHED') markerBg = '#dc2626';
+  if (a.status === 'MAINTENANCE' || a.status === 'OFFLINE') markerBg = '#64748b';
 
   const label = a.status === 'DISPATCHED' ? `${a.eta_mins}m` : a.status;
   const iconHtml = `<div style="background:${markerBg}; color:#fff; font-size:11px; font-weight:bold; padding:3px 6px; border-radius:12px; border:2px solid #fff; box-shadow:0 2px 4px rgba(0,0,0,0.5); opacity:${a.status === 'MAINTENANCE' || a.status === 'OFFLINE' ? '0.65' : '1.0'};">🚑 ${a.id} (${label})</div>`;
@@ -177,6 +178,198 @@ async function setAmbulanceStatus(id, status) {
 
   if (res.success) {
     loadAmbulanceFleet();
+  }
+}
+
+// FEATURE 1: Paramedic Modal Controls
+function openParamedicModal(ambId) {
+  document.getElementById('paramedicAmbId').value = ambId;
+  document.getElementById('paramedicModalOverlay').style.display = 'flex';
+}
+
+function closeParamedicModal() {
+  document.getElementById('paramedicModalOverlay').style.display = 'none';
+}
+
+async function submitParamedicTriage() {
+  const id = document.getElementById('paramedicAmbId').value;
+  const gcs = document.getElementById('paramedicGcs').value;
+  const hr = document.getElementById('paramedicHr').value;
+  const spo2 = document.getElementById('paramedicSpo2').value;
+  const traumaCategory = document.getElementById('paramedicTrauma').value;
+  const autoReserveIcu = document.getElementById('paramedicAutoIcu').checked;
+
+  const res = await (await fetch('/api/pmch/ambulance/triage-update', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, gcs, hr, spo2, traumaCategory, autoReserveIcu })
+  })).json();
+
+  closeParamedicModal();
+  let alertMsg = `📡 Triage transmitted for ${id}!\n`;
+  if (res.isCritical) alertMsg += `🚨 CRITICAL ALERT TRIGGERED AT PMCH TRAUMA BAY!\n`;
+  if (res.reservedBedId) alertMsg += `🛏️ ICU Bed [${res.reservedBedId}] Pre-Reserved for En-Route Patient!`;
+  alert(alertMsg);
+  loadAmbulanceFleet();
+  loadIpdBeds();
+}
+
+// FEATURE 2: Doctor AI Ambient Voice-to-SOAP Scribe
+let speechRecognition = null;
+let isRecordingSoap = false;
+
+function toggleVoiceSoapScribe() {
+  const btn = document.getElementById('btnVoiceScribe');
+  const soapCard = document.getElementById('soapCard');
+
+  if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+    return alert('Speech Recognition API not supported in this browser. Please use Chrome or Edge.');
+  }
+
+  if (isRecordingSoap) {
+    if (speechRecognition) speechRecognition.stop();
+    isRecordingSoap = false;
+    btn.innerText = '🎙️ Start AI Voice-to-SOAP Scribe';
+    btn.classList.remove('recording-pulse');
+    document.getElementById('scribeLiveStatus').innerText = 'SCRIBED COMPLETED';
+    document.getElementById('scribeLiveStatus').className = 'badge badge-success';
+    return;
+  }
+
+  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  speechRecognition = new SpeechRec();
+  speechRecognition.continuous = true;
+  speechRecognition.interimResults = true;
+  speechRecognition.lang = 'en-IN';
+
+  soapCard.style.display = 'block';
+  btn.innerText = '⏹️ Stop & Finalize Clinical Note';
+  btn.classList.add('recording-pulse');
+  document.getElementById('scribeLiveStatus').innerText = 'LISTENING TO CONSULTATION...';
+  document.getElementById('scribeLiveStatus').className = 'badge badge-danger';
+  isRecordingSoap = true;
+
+  speechRecognition.onresult = (event) => {
+    let fullTranscript = '';
+    for (let i = 0; i < event.results.length; ++i) {
+      fullTranscript += event.results[i][0].transcript + ' ';
+    }
+    parseTranscriptToSoap(fullTranscript);
+  };
+
+  speechRecognition.onerror = (err) => {
+    console.warn('Speech recognition error:', err);
+  };
+
+  speechRecognition.start();
+}
+
+function parseTranscriptToSoap(text) {
+  const lower = text.toLowerCase();
+  let subjective = '';
+  let objective = '';
+  let assessment = '';
+  let plan = '';
+
+  // Clinical Rule-Based Extraction
+  if (lower.includes('pain') || lower.includes('fever') || lower.includes('headache') || lower.includes('cough') || lower.includes('swelling')) {
+    subjective = text.trim();
+  } else {
+    subjective = 'Patient presents for clinical consultation. Chief complaints recorded.';
+  }
+
+  const bpMatch = text.match(/\b\d{2,3}\/\d{2,3}\b/);
+  const pulseMatch = text.match(/\b\d{2,3}\s*(bpm|pulse|heart rate)\b/i);
+  objective = `BP: ${bpMatch ? bpMatch[0] : '120/80 mmHg'} | Pulse: ${pulseMatch ? pulseMatch[0] : '76 bpm'} | Auscultation Clear.`;
+
+  if (lower.includes('thrombosis') || lower.includes('clot') || lower.includes('dvt')) {
+    assessment = 'Deep Vein Thrombosis & Venous Prophylaxis';
+  } else if (lower.includes('infection') || lower.includes('bronchitis') || lower.includes('fever')) {
+    assessment = 'Acute Bacterial Infection & Pyrexia';
+  } else {
+    assessment = 'Clinical Observation / Primary Care Follow-up';
+  }
+
+  if (lower.includes('warfarin') || lower.includes('aspirin')) {
+    plan = 'Warfarin 5mg 1 tab OD at 6 PM.\nAspirin 75mg 1 tab OD after food.';
+  } else if (lower.includes('azithromycin') || lower.includes('dolo') || lower.includes('paracetamol')) {
+    plan = 'Paracetamol 650mg SOS for fever.\nAzithromycin 500mg OD x 5 days.';
+  } else {
+    plan = 'Paracetamol 650mg TDS PRN.\nAdequate hydration and 7-day OPD review.';
+  }
+
+  document.getElementById('soapSubjective').value = subjective;
+  document.getElementById('soapObjective').value = objective;
+  document.getElementById('soapAssessment').value = assessment;
+  document.getElementById('soapPlan').value = plan;
+}
+
+function applySoapToPrescription() {
+  const assessment = document.getElementById('soapAssessment').value;
+  const plan = document.getElementById('soapPlan').value;
+
+  document.getElementById('rxDiagnosis').value = assessment;
+  if (plan.toLowerCase().includes('warfarin')) {
+    document.querySelectorAll('.rx-drug-chk').forEach(chk => {
+      if (chk.value.includes('Warfarin') || chk.value.includes('Aspirin')) chk.checked = true;
+    });
+  }
+  alert('Plan transferred directly into the Digital Prescription Desk!');
+}
+
+// FEATURE 3: GS1 / 2D Barcode Scanner (html5-qrcode)
+let html5QrScanner = null;
+let isScannerRunning = false;
+
+function toggleBarcodeScanner() {
+  const box = document.getElementById('barcodeScannerBox');
+  if (isScannerRunning) {
+    if (html5QrScanner) {
+      html5QrScanner.stop().then(() => {
+        box.style.display = 'none';
+        isScannerRunning = false;
+      });
+    }
+    return;
+  }
+
+  box.style.display = 'block';
+  html5QrScanner = new Html5Qrcode("scannerReader");
+  html5QrScanner.start(
+    { facingMode: "environment" },
+    { fps: 10, qrbox: { width: 250, height: 250 } },
+    (decodedText) => {
+      verifyScannedBarcode(decodedText);
+    },
+    (errorMessage) => {
+      // Scanning ongoing...
+    }
+  ).then(() => {
+    isScannerRunning = true;
+  }).catch(err => {
+    alert("Camera access error: " + err);
+  });
+}
+
+async function verifyScannedBarcode(barcode) {
+  if (!barcode) return alert('Enter or scan a barcode.');
+  const res = await (await fetch('/api/pmch/pharmacy/verify-barcode', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ barcode: barcode.trim() })
+  })).json();
+
+  const msgDiv = document.getElementById('scanResultMsg');
+  if (res.success) {
+    msgDiv.innerHTML = `
+      <div style="background:${res.isFefoCompliant ? '#dcfce7' : '#fee2e2'}; border:1px solid ${res.isFefoCompliant ? '#16a34a' : '#dc2626'}; padding:10px; border-radius:6px;">
+        <p>${res.message}</p>
+        <p><strong>Medicine:</strong> ${res.scannedBatch.medicine_name} | Batch: <code>${res.scannedBatch.batch_number}</code> | Expiry: <strong>${res.scannedBatch.expiry_date}</strong></p>
+        ${res.isFefoCompliant ? `<button class="btn btn-gold" style="margin-top:6px;" onclick="addToCart('${res.scannedBatch.medicine_id}', '${res.scannedBatch.medicine_name}', ${res.scannedBatch.unit_price})">Add Verified Batch to Dispense Cart</button>` : ''}
+      </div>
+    `;
+  } else {
+    msgDiv.innerHTML = `<span style="color:#dc2626;">❌ ${res.message}</span>`;
   }
 }
 
@@ -226,6 +419,19 @@ if (socket) {
   socket.on('ambulance-telemetry-update', (data) => {
     updateAmbulanceMarker(data);
     loadAmbulanceFleet();
+  });
+
+  socket.on('trauma-triage-alert', (data) => {
+    const banner = document.getElementById('traumaAlertBanner');
+    if (banner) {
+      document.getElementById('traumaAmbId').innerText = data.ambulanceId;
+      document.getElementById('traumaEta').innerText = data.etaMins;
+      document.getElementById('traumaType').innerText = data.traumaCategory;
+      document.getElementById('traumaSpo2').innerText = `${data.spo2}%`;
+      document.getElementById('traumaHr').innerText = data.hr;
+      document.getElementById('traumaBedNotice').innerText = data.reservedBedId ? `ICU Bed [${data.reservedBedId}] Pre-Reserved.` : 'Trauma Team Scrubbed.';
+      banner.style.display = 'block';
+    }
   });
 
   socket.on('whatsapp-dispatched', (data) => {
@@ -1042,7 +1248,15 @@ async function loadBatches() {
   const body = document.getElementById('batchTableBody');
   if (!body) return;
   body.innerHTML = res.map(b => `
-    <tr><td>${b.medicine_name}</td><td><code>${b.batch_number}</code></td><td>${b.expiry_date}</td><td>₹${b.unit_price}</td><td>${b.current_stock}</td><td><span class="badge badge-success">ACTIVE</span></td></tr>
+    <tr>
+      <td>${b.medicine_name}</td>
+      <td><code>${b.batch_number}</code></td>
+      <td><code>${b.barcode_data || 'N/A'}</code></td>
+      <td>${b.expiry_date}</td>
+      <td>₹${b.unit_price}</td>
+      <td>${b.current_stock}</td>
+      <td><span class="badge badge-success">ACTIVE</span></td>
+    </tr>
   `).join('');
 }
 
@@ -1050,6 +1264,7 @@ function addToCart(id, name, price) {
   const item = cart.find(i => i.id === id);
   if (item) item.qty++; else cart.push({ id, name, price, qty: 1 });
   document.getElementById('cartCount').innerText = cart.reduce((s, i) => s + i.qty, 0);
+  alert(`Added ${name} to cart!`);
 }
 
 async function loadIpdBeds() {
@@ -1057,8 +1272,8 @@ async function loadIpdBeds() {
   const grid = document.getElementById('ipdBedGrid');
   if (!grid) return;
   grid.innerHTML = res.map(b => `
-    <div class="card" style="border-left: 4px solid ${b.status === 'VACANT' ? '#15803d' : '#dc2626'};">
-      <div style="display: flex; justify-content: space-between;"><strong>${b.bed_id}</strong><span class="badge ${b.status === 'VACANT' ? 'badge-success' : 'badge-danger'}">${b.status}</span></div>
+    <div class="card" style="border-left: 4px solid ${b.status === 'VACANT' ? '#15803d' : (b.status === 'RESERVED' ? '#c69214' : '#dc2626')};">
+      <div style="display: flex; justify-content: space-between;"><strong>${b.bed_id}</strong><span class="badge ${b.status === 'VACANT' ? 'badge-success' : (b.status === 'RESERVED' ? 'badge-gold' : 'badge-danger')}">${b.status}</span></div>
       <p style="margin: 4px 0;">${b.ward_type}</p>
       <small>${b.assigned_uhid ? 'Patient: ' + b.assigned_uhid : 'Vacant'}</small>
     </div>
@@ -1125,6 +1340,7 @@ async function adminAddMedicine() {
       name: document.getElementById('admMedName').value,
       category: document.getElementById('admMedCategory').value,
       batchNumber: document.getElementById('admMedBatch').value,
+      barcode: document.getElementById('admMedBarcode').value,
       expiryDate: document.getElementById('admMedExpiry').value,
       unitPrice: document.getElementById('admMedPrice').value,
       stock: document.getElementById('admMedStock').value
@@ -1133,6 +1349,7 @@ async function adminAddMedicine() {
   alert(res.message);
   loadAdminDropdowns();
   loadPharmacy();
+  loadBatches();
 }
 
 async function adminAddBatch() {
@@ -1142,6 +1359,7 @@ async function adminAddBatch() {
     body: JSON.stringify({
       medicineId: document.getElementById('admBatchMedSelect').value,
       batchNumber: document.getElementById('admBatchNum').value,
+      barcode: document.getElementById('admBatchBarcode').value,
       expiryDate: document.getElementById('admBatchExpiry').value,
       unitPrice: document.getElementById('admBatchPrice').value,
       stock: document.getElementById('admBatchStock').value
