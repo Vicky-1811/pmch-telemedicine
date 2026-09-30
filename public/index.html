@@ -125,7 +125,7 @@
     <button onclick="dismissCodeBlue()" style="margin-left: 15px; padding: 3px 8px; font-size: 11px; background: #fff; color: #000; border: none; border-radius: 3px; cursor: pointer;">Acknowledge</button>
   </div>
 
-  <!-- WHATSAPP TOAST -->
+  <!-- WHATSAPP NOTIFICATION TOAST -->
   <div id="whatsappLiveToast">
     <div style="display: flex; justify-content: space-between; align-items: center;">
       <strong style="color: #25d366; font-size: 13px;">📲 WhatsApp Business Cloud</strong>
@@ -137,7 +137,7 @@
     </div>
   </div>
 
-  <!-- UPI MODAL -->
+  <!-- UPI PAYMENT MODAL -->
   <div id="upiModalOverlay">
     <div class="upi-checkout-card">
       <h3 style="color: var(--pmch-navy); margin-bottom: 2px;">PMCH Secure UPI Gateway</h3>
@@ -157,7 +157,7 @@
     </div>
   </div>
 
-  <!-- LOGIN MODAL -->
+  <!-- ROLE AUTHENTICATION MODAL -->
   <div id="loginOverlay">
     <div class="login-box">
       <div class="login-logo">
@@ -203,7 +203,7 @@
     </div>
   </div>
 
-  <!-- HEADER -->
+  <!-- MAIN HEADER & NAVIGATION -->
   <header>
     <div class="header-content">
       <div class="hospital-brand">
@@ -273,7 +273,7 @@
       </div>
 
       <div class="video-ctrl-bar">
-        <button class="btn" id="btnToggleAudio" onclick="toggleLocalAudio()">🎙️ Mute Mic</button>
+        <button class="btn" id="btnToggleAudio" onclick="toggleLocalAudio()">🎙 Mute Mic</button>
         <button class="btn" id="btnToggleVideo" onclick="toggleLocalVideo()">📷 Turn Off Camera</button>
       </div>
     </section>
@@ -284,14 +284,14 @@
         <h2>🚑 Emergency Ambulance Fleet & Live GPS Command Map</h2>
         <button class="btn btn-danger" onclick="dispatchEmergencyAmbulance('AMB-02')">🚨 Dispatch Standby Mobile ICU</button>
       </div>
-      <p style="color: #64748b; font-size: 13px; margin: 4px 0 10px 0;">Real-time GPS coordinates streamed over Socket.io toward Panimalar Medical College Hospital Emergency Bay (Poonamallee, Chennai).</p>
+      <p style="color: #64748b; font-size: 13px; margin: 4px 0 10px 0;">Live GPS tracking streamed over Socket.io toward Panimalar Emergency Bay (Poonamallee, Chennai).</p>
 
       <div id="ambulanceMap"></div>
 
       <div class="card" style="margin-top: 16px;">
         <h4>Active Fleet Status & Pre-Arrival Triage Vitals</h4>
         <table>
-          <thead><tr><th>Ambulance ID</th><th>Vehicle No</th><th>Driver Phone</th><th>Status</th><th>ETA</th><th>En-Route Triage Vitals</th><th>Action</th></tr></thead>
+          <thead><tr><th>Ambulance ID</th><th>Vehicle No</th><th>Driver Phone</th><th>Status</th><th>ETA</th><th>En-Route Triage Vitals</th><th>Fleet Actions</th></tr></thead>
           <tbody id="ambulanceTableBody"></tbody>
         </table>
       </div>

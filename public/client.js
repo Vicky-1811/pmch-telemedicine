@@ -9,7 +9,7 @@ try {
   console.warn('Socket connection delayed:', e);
 }
 
-// Hardened Audio Queue Chime & Speech Synthesis
+// Audio Queue Chime & Speech Synthesis
 let audioCtx = null;
 async function playAlertTone() {
   try {
@@ -98,17 +98,40 @@ async function loadAmbulanceFleet() {
   const res = await (await fetch('/api/pmch/ambulance/fleet')).json();
   const tbody = document.getElementById('ambulanceTableBody');
   if (tbody) {
-    tbody.innerHTML = res.map(a => `
-      <tr>
-        <td><strong>${a.id}</strong></td>
-        <td><code>${a.vehicle_no}</code></td>
-        <td>${a.driver_phone} (${a.driver_name})</td>
-        <td><span class="badge ${a.status === 'DISPATCHED' ? 'badge-danger' : 'badge-success'}">${a.status}</span></td>
-        <td><strong>${a.eta_mins > 0 ? a.eta_mins + ' mins' : 'At Bay'}</strong></td>
-        <td style="color:#0284c7; font-size:11.5px;">${a.patient_vitals_summary}</td>
-        <td>${a.status === 'AVAILABLE' ? `<button class="btn btn-danger" style="padding:3px 8px; font-size:11px;" onclick="dispatchEmergencyAmbulance('${a.id}')">Dispatch</button>` : '<span class="badge badge-navy">En-Route</span>'}</td>
-      </tr>
-    `).join('');
+    tbody.innerHTML = res.map(a => {
+      let badgeClass = 'badge-success';
+      if (a.status === 'DISPATCHED') badgeClass = 'badge-danger';
+      if (a.status === 'MAINTENANCE' || a.status === 'OFFLINE') badgeClass = 'badge-gold';
+
+      let actionButtons = '';
+      if (a.status === 'AVAILABLE') {
+        actionButtons = `
+          <button class="btn btn-danger" style="padding:3px 7px; font-size:11px;" onclick="dispatchEmergencyAmbulance('${a.id}')">Dispatch</button>
+          <button class="btn" style="padding:3px 7px; font-size:11px; background:#64748b;" onclick="setAmbulanceStatus('${a.id}', 'MAINTENANCE')">Take Offline</button>
+        `;
+      } else if (a.status === 'DISPATCHED') {
+        actionButtons = `
+          <button class="btn" style="padding:3px 7px; font-size:11px; background:#15803d;" onclick="setAmbulanceStatus('${a.id}', 'AVAILABLE')">Dock / Standby</button>
+          <button class="btn" style="padding:3px 7px; font-size:11px; background:#64748b;" onclick="setAmbulanceStatus('${a.id}', 'MAINTENANCE')">Take Offline</button>
+        `;
+      } else {
+        actionButtons = `
+          <button class="btn btn-gold" style="padding:3px 7px; font-size:11px;" onclick="setAmbulanceStatus('${a.id}', 'AVAILABLE')">Mark Active</button>
+        `;
+      }
+
+      return `
+        <tr>
+          <td><strong>${a.id}</strong></td>
+          <td><code>${a.vehicle_no}</code></td>
+          <td>${a.driver_phone} (${a.driver_name})</td>
+          <td><span class="badge ${badgeClass}">${a.status}</span></td>
+          <td><strong>${a.eta_mins > 0 ? a.eta_mins + ' mins' : 'Docked'}</strong></td>
+          <td style="color:#0284c7; font-size:11.5px;">${a.patient_vitals_summary}</td>
+          <td><div style="display:flex; gap:4px;">${actionButtons}</div></td>
+        </tr>
+      `;
+    }).join('');
   }
 
   if (map) {
@@ -118,16 +141,20 @@ async function loadAmbulanceFleet() {
 
 function updateAmbulanceMarker(a) {
   if (!map) return;
-  const isEnRoute = a.status === 'DISPATCHED';
-  const iconHtml = `<div style="background:${isEnRoute ? '#dc2626' : '#15803d'}; color:#fff; font-size:11px; font-weight:bold; padding:3px 6px; border-radius:12px; border:2px solid #fff; box-shadow:0 2px 4px rgba(0,0,0,0.5);">🚑 ${a.id} (${a.eta_mins}m)</div>`;
-  const icon = L.divIcon({ className: 'amb-icon', html: iconHtml, iconSize: [95, 24] });
+  let markerBg = '#15803d'; // Available (Green)
+  if (a.status === 'DISPATCHED') markerBg = '#dc2626'; // En-route (Red)
+  if (a.status === 'MAINTENANCE' || a.status === 'OFFLINE') markerBg = '#64748b'; // Inactive (Slate)
+
+  const label = a.status === 'DISPATCHED' ? `${a.eta_mins}m` : a.status;
+  const iconHtml = `<div style="background:${markerBg}; color:#fff; font-size:11px; font-weight:bold; padding:3px 6px; border-radius:12px; border:2px solid #fff; box-shadow:0 2px 4px rgba(0,0,0,0.5); opacity:${a.status === 'MAINTENANCE' || a.status === 'OFFLINE' ? '0.65' : '1.0'};">🚑 ${a.id} (${label})</div>`;
+  const icon = L.divIcon({ className: 'amb-icon', html: iconHtml, iconSize: [100, 24] });
 
   if (ambulanceMarkers[a.id]) {
     ambulanceMarkers[a.id].setLatLng([a.lat, a.lng]);
     ambulanceMarkers[a.id].setIcon(icon);
   } else {
     ambulanceMarkers[a.id] = L.marker([a.lat, a.lng], { icon }).addTo(map)
-      .bindPopup(`<b>${a.id} (${a.vehicle_no})</b><br/>Driver: ${a.driver_name}<br/>ETA: ${a.eta_mins} mins<br/>Vitals: ${a.patient_vitals_summary}`);
+      .bindPopup(`<b>${a.id} (${a.vehicle_no})</b><br/>Driver: ${a.driver_name}<br/>Status: ${a.status}<br/>Vitals: ${a.patient_vitals_summary}`);
   }
 }
 
@@ -141,7 +168,19 @@ async function dispatchEmergencyAmbulance(id) {
   loadAmbulanceFleet();
 }
 
-// WhatsApp Alert Dispatch Engine
+async function setAmbulanceStatus(id, status) {
+  const res = await (await fetch('/api/pmch/ambulance/set-status', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, status })
+  })).json();
+
+  if (res.success) {
+    loadAmbulanceFleet();
+  }
+}
+
+// WhatsApp Live Toast
 function displayWhatsAppToast(phone, body) {
   const toast = document.getElementById('whatsappLiveToast');
   if (!toast) return;
@@ -182,7 +221,7 @@ async function loadNotificationLogs() {
   `).join('');
 }
 
-// Socket Handlers
+// WebSocket Event Listeners
 if (socket) {
   socket.on('ambulance-telemetry-update', (data) => {
     updateAmbulanceMarker(data);
@@ -329,7 +368,7 @@ function toggleLocalAudio() {
   const track = localStream.getAudioTracks()[0];
   if (track) {
     track.enabled = !track.enabled;
-    document.getElementById('btnToggleAudio').innerText = track.enabled ? '🎙️ Mute Mic' : '🔇 Unmute Mic';
+    document.getElementById('btnToggleAudio').innerText = track.enabled ? '🎙 Mute Mic' : '🔇 Unmute Mic';
   }
 }
 
@@ -342,7 +381,7 @@ function toggleLocalVideo() {
   }
 }
 
-// UPI Payment Gateway Engine
+// UPI QR Gateway Modal
 let activePaymentCallback = null;
 let upiTimerInterval = null;
 
@@ -483,7 +522,7 @@ async function initiateDischargeUpiPayment() {
   });
 }
 
-// Bedside Waveform Oscilloscope
+// Bedside Oscilloscope Canvas
 let ecgX = 0;
 let lastY = 45;
 function initEcgWaveform() {
@@ -627,7 +666,7 @@ async function loadInsuranceDossier(uhid) {
   }
 }
 
-// Billing & PDF Dossier
+// Billing Dossier
 async function calculateHospitalBill(optionalUhid) {
   const targetUhid = optionalUhid || document.getElementById('billingUhid')?.value?.trim() || getActiveUhid();
   const data = await (await fetch('/api/pmch/billing/summary/' + targetUhid)).json();
@@ -733,7 +772,7 @@ function generateDischargePdf() {
   doc.save(`PMCH-Discharge-Claim-${lastCalculatedBill.uhid}.pdf`);
 }
 
-// Clinical AI Co-Pilot
+// Clinical AI
 async function runAiInteractionCheck() {
   const selectedDrugs = Array.from(document.querySelectorAll('.rx-drug-chk:checked')).map(el => el.value);
   const allergies = [];
@@ -780,7 +819,7 @@ async function generatePrescription() {
   if (res.success) alert('Official Prescription Digitally Signed!');
 }
 
-// Authentication & Email/OTP Switcher
+// Authentication
 let isOtpLogin = false;
 
 function toggleLoginMethod() {
@@ -810,9 +849,8 @@ function toggleLoginMethod() {
 
 async function requestLoginEmailOtp() {
   const email = document.getElementById('loginUsername').value.trim();
-  if (!email || !email.includes('@')) {
-    return alert('Please enter a valid email address first.');
-  }
+  if (!email || !email.includes('@')) return alert('Please enter a valid email address first.');
+
   const res = await (await fetch('/api/pmch/auth/send-email-otp', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -906,7 +944,6 @@ function applyRolePermissions(user) {
   if (document.getElementById('insUhid')) document.getElementById('insUhid').value = activeUhid;
   if (document.getElementById('abhaUhid')) document.getElementById('abhaUhid').value = activeUhid;
 
-  // Make ambulance and alerts visible to all logged-in roles
   if (navAmbulance) navAmbulance.style.display = 'inline-block';
   if (navAlerts) navAlerts.style.display = 'inline-block';
 
