@@ -5,9 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Panimalar Medical College Hospital & RI - Portal</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-  <!-- Leaflet Map CSS & JS -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <!-- HTML5 QR / 2D Barcode Scanner -->
   <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
 
@@ -30,7 +27,6 @@
     }
     @keyframes flash-red { from { background: #dc2626; } to { background: #7f1d1d; } }
 
-    /* FEATURE 1: Paramedic Pre-Arrival Alert Strip */
     #traumaAlertBanner {
       display: none; background: #b91c1c; color: #fff; padding: 12px 18px;
       font-weight: bold; font-size: 14px; text-align: center; border-bottom: 3px solid #facc15;
@@ -119,9 +115,50 @@
 
     .admin-subgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; margin-top: 14px; }
     .copay-box { background: #f8fafc; border: 2px dashed #0284c7; border-radius: 8px; padding: 14px; margin: 12px 0; }
-    #ambulanceMap { height: 420px; width: 100%; border-radius: 8px; border: 2px solid #cbd5e1; margin-top: 12px; }
 
-    /* FEATURE 2: Voice Scribe Styling */
+    /* REAL GOOGLE MAP CONTAINER */
+    #ambulanceGoogleMap {
+      height: 480px; width: 100%; border-radius: 10px; border: 2px solid #cbd5e1;
+      margin-top: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); position: relative; background: #e5e7eb;
+    }
+
+    /* REAL-TIME LIVE MOVING AMBULANCE EMOJI MARKERS */
+    .gmap-amb-marker {
+      position: absolute; transform: translate(-50%, -100%);
+      transition: all 1.2s cubic-bezier(0.25, 1, 0.5, 1);
+      cursor: pointer; z-index: 1000; user-select: none;
+    }
+    .amb-badge-container {
+      display: flex; flex-direction: column; align-items: center; filter: drop-shadow(0 4px 8px rgba(0,0,0,0.35));
+    }
+    .amb-emoji-bubble {
+      font-size: 26px; line-height: 1; display: inline-block;
+      animation: amb-bounce 1.4s infinite ease-in-out;
+    }
+    @keyframes amb-bounce {
+      0%, 100% { transform: translateY(0) scale(1); }
+      50% { transform: translateY(-5px) scale(1.08); }
+    }
+    .amb-status-tag {
+      background: #dc2626; color: #fff; font-size: 11px; font-weight: 800;
+      padding: 3px 8px; border-radius: 12px; border: 2px solid #fff; margin-top: 2px;
+      white-space: nowrap; box-shadow: 0 2px 5px rgba(0,0,0,0.25);
+    }
+    .amb-status-tag.standby { background: #15803d; }
+    .amb-status-tag.offline { background: #64748b; }
+    .siren-beacon {
+      font-size: 12px; margin-left: 2px; animation: siren-pulse 0.6s infinite alternate;
+    }
+    @keyframes siren-pulse { from { opacity: 0.2; } to { opacity: 1; } }
+
+    /* Hospital Base Pin */
+    .gmap-hosp-pin {
+      position: absolute; transform: translate(-50%, -100%);
+      background: #0e2a47; color: #c69214; font-weight: bold; font-size: 12px;
+      padding: 5px 10px; border-radius: 6px; border: 2px solid #c69214;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4); text-align: center; white-space: nowrap; z-index: 900;
+    }
+
     .soap-box { background: #f0fdf4; border: 1px solid #86efac; border-radius: 6px; padding: 12px; margin-top: 10px; }
     .recording-pulse { animation: rec-pulse 1s infinite alternate; }
     @keyframes rec-pulse { from { background: #dc2626; color: #fff; } to { background: #f87171; color: #fff; } }
@@ -135,7 +172,7 @@
     <button onclick="dismissCodeBlue()" style="margin-left: 15px; padding: 3px 8px; font-size: 11px; background: #fff; color: #000; border: none; border-radius: 3px; cursor: pointer;">Acknowledge</button>
   </div>
 
-  <!-- FEATURE 1: TRAUMA EN-ROUTE ALERT STRIP -->
+  <!-- TRAUMA EN-ROUTE ALERT STRIP -->
   <div id="traumaAlertBanner">
     🚑 TRAUMA BAY ALERT: <span id="traumaAmbId">AMB-01</span> arriving in <span id="traumaEta">6</span> mins! 
     Trauma: <span id="traumaType">Blunt Trauma</span> | SpO2: <span id="traumaSpo2">94%</span> | HR: <span id="traumaHr">104</span> BPM. 
@@ -155,7 +192,7 @@
     </div>
   </div>
 
-  <!-- FEATURE 1: PARAMEDIC EN-ROUTE VITALS INPUT MODAL -->
+  <!-- PARAMEDIC EN-ROUTE VITALS INPUT MODAL -->
   <div id="paramedicModalOverlay">
     <div class="modal-card" style="border-top: 6px solid #dc2626;">
       <h3 style="color: var(--pmch-navy);">🚑 Paramedic En-Route Triage Vitals</h3>
@@ -286,8 +323,8 @@
       <nav id="hospitalNav">
         <button class="nav-btn active" id="nav-opd" onclick="switchTab('tab-opd')">Doctors & Queue</button>
         <button class="nav-btn" id="nav-telemed" onclick="switchTab('tab-telemed')">📹 Telemedicine Room</button>
-        <button class="nav-btn" id="nav-ambulance" onclick="switchTab('tab-ambulance')">🚑 Ambulance GPS Fleet</button>
-        <button class="nav-btn" id="nav-rx" onclick="switchTab('tab-rx')">Clinical AI & E-Prescription</button>
+        <button class="nav-btn" id="nav-ambulance" onclick="switchTab('tab-ambulance')">🚑 Ambulance Live GPS</button>
+        <button class="nav-btn" id="nav-rx" onclick="switchTab('tab-rx')">Clinical AI & Scribe</button>
         <button class="nav-btn" id="nav-pharmacy" onclick="switchTab('tab-pharmacy')">Central Pharmacy & FEFO</button>
         <button class="nav-btn" id="nav-ipd" onclick="switchTab('tab-ipd')">IPD Wards & Telemetry</button>
         <button class="nav-btn" id="nav-lims" onclick="switchTab('tab-lims')">Diagnostic Lab</button>
@@ -341,15 +378,27 @@
       </div>
     </section>
 
-    <!-- TAB 3: AMBULANCE FLEET & GPS MAP -->
+    <!-- TAB 3: REAL GOOGLE MAPS + LIVE MOVING AMBULANCE EMOJIS & TRAJECTORY -->
     <section id="tab-ambulance" class="tab-content">
-      <div style="display: flex; justify-content: space-between; align-items: center;">
-        <h2>🚑 Emergency Ambulance Fleet & Live GPS Command Map</h2>
-        <button class="btn btn-danger" onclick="dispatchEmergencyAmbulance('AMB-02')">🚨 Dispatch Standby Mobile ICU</button>
+      <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+        <div>
+          <h2>🚑 Live Google Maps Ambulance Fleet & Trajectory Radar</h2>
+          <small style="color: #64748b;">Live animated emoji vehicles moving along Chennai highway arterial paths with dynamic trajectory breadcrumbs.</small>
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn" style="background: #0284c7; font-size: 12px;" onclick="promptGoogleMapsApiKey()">🔑 Set Google Maps Key</button>
+          <button class="btn btn-danger" style="font-size: 12px;" onclick="dispatchEmergencyAmbulance('AMB-02')">🚨 Dispatch Standby Mobile ICU</button>
+        </div>
       </div>
-      <p style="color: #64748b; font-size: 13px; margin: 4px 0 10px 0;">Live GPS tracking streamed over Socket.io toward Panimalar Emergency Bay (Poonamallee, Chennai).</p>
 
-      <div id="ambulanceMap"></div>
+      <!-- Real Google Map Viewport -->
+      <div id="ambulanceGoogleMap">
+        <div id="gmapFallbackNotice" style="padding: 30px; text-align: center; color: #475569; display: none;">
+          <h3>🗺️ Real Google Maps Engine</h3>
+          <p style="font-size: 13px; margin: 8px 0 14px 0;">Enter your Google Maps JavaScript API Key to view high-resolution satellite/terrain road maps with live traffic.</p>
+          <button class="btn btn-gold" onclick="promptGoogleMapsApiKey()">Enter Google Maps API Key</button>
+        </div>
+      </div>
 
       <div class="card" style="margin-top: 16px;">
         <h4>Active Fleet Status & Pre-Arrival Triage Vitals</h4>
@@ -360,15 +409,13 @@
       </div>
     </section>
 
-    <!-- TAB 4: CLINICAL AI & E-PRESCRIPTION + FEATURE 2: VOICE SOAP SCRIBE -->
+    <!-- TAB 4: CLINICAL AI & E-PRESCRIPTION + VOICE SOAP SCRIBE -->
     <section id="tab-rx" class="tab-content">
       <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap;">
         <h2>Doctor Clinical E-Prescription Desk & AI Co-Pilot</h2>
-        <!-- FEATURE 2 VOICE BUTTON -->
         <button class="btn" id="btnVoiceScribe" style="background:#be123c;" onclick="toggleVoiceSoapScribe()">🎙️ Start AI Voice-to-SOAP Scribe</button>
       </div>
 
-      <!-- FEATURE 2 SOAP CARD -->
       <div id="soapCard" class="card soap-box" style="display:none; margin: 12px 0;">
         <div style="display:flex; justify-content:space-between;">
           <strong style="color: #15803d;">🩺 AI Ambient Voice-to-SOAP Clinical Scribe</strong>
@@ -411,18 +458,16 @@
       </div>
     </section>
 
-    <!-- TAB 5: PHARMACY + FEATURE 3: GS1 BARCODE SCANNER -->
+    <!-- TAB 5: PHARMACY + GS1 BARCODE SCANNER -->
     <section id="tab-pharmacy" class="tab-content">
       <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap:wrap;">
         <h2>Central Pharmacy & FEFO Dispensing</h2>
         <div style="display:flex; gap:8px;">
-          <!-- FEATURE 3 SCANNER BUTTON -->
           <button class="btn" style="background: #0284c7;" onclick="toggleBarcodeScanner()">📷 Scan 2D Medicine Barcode</button>
           <button class="btn btn-gold" onclick="initiatePharmacyCheckout()">Pay via UPI & Order (<span id="cartCount">0</span>)</button>
         </div>
       </div>
 
-      <!-- FEATURE 3 SCANNER INTERFACE -->
       <div id="barcodeScannerBox" class="card" style="display:none; max-width: 500px; margin: 12px 0;">
         <h4>📷 Webcam GS1 / 2D DataMatrix Medicine Scanner</h4>
         <div id="scannerReader" style="width: 100%; min-height: 250px; background:#000; margin: 10px 0; border-radius:6px;"></div>

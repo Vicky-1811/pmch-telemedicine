@@ -9,7 +9,7 @@ try {
   console.warn('Socket connection delayed:', e);
 }
 
-// Audio Chime & Speech Synthesis
+// Audio Queue Chime & Speech Synthesis
 let audioCtx = null;
 async function playAlertTone() {
   try {
@@ -71,27 +71,119 @@ async function advanceOpdDoctorQueue() {
   }
 }
 
-// Leaflet GPS Ambulance Map Engine
-let map = null;
-let ambulanceMarkers = {};
-const PMCH_COORDS = [13.0498, 80.0754];
+// ======================== REAL GOOGLE MAPS + ANIMATED 🚑 EMOJI OVERLAYS ========================
+let googleMap = null;
+let customOverlayLayer = null;
+let googleMapsLoaded = false;
+let ambulanceEmojiOverlays = {};
+let trajectoryPolylines = {};
+const PMCH_LATLNG = { lat: 13.0498, lng: 80.0754 };
 
-function initAmbulanceMap() {
-  if (map || !document.getElementById('ambulanceMap')) return;
+function promptGoogleMapsApiKey() {
+  const current = localStorage.getItem('pmch_gmaps_key') || '';
+  const key = prompt('Enter your Google Maps JavaScript API Key:\n(Leave blank to reset to default/demo mode)', current);
+  if (key !== null) {
+    localStorage.setItem('pmch_gmaps_key', key.trim());
+    location.reload();
+  }
+}
 
-  map = L.map('ambulanceMap').setView(PMCH_COORDS, 13);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '© OpenStreetMap contributors'
-  }).addTo(map);
+function loadGoogleMapsScript(callback) {
+  if (window.google && window.google.maps) {
+    googleMapsLoaded = true;
+    return callback();
+  }
+  const savedKey = localStorage.getItem('pmch_gmaps_key') || '';
+  const script = document.createElement('script');
+  script.src = `https://maps.googleapis.com/maps/api/js?key=${savedKey}&libraries=geometry&callback=onGoogleMapsApiReady`;
+  script.async = true;
+  script.defer = true;
+  window.onGoogleMapsApiReady = () => {
+    googleMapsLoaded = true;
+    callback();
+  };
+  script.onerror = () => {
+    console.warn('Google Maps script failed to load. Showing key entry prompt.');
+    const fallback = document.getElementById('gmapFallbackNotice');
+    if (fallback) fallback.style.display = 'block';
+  };
+  document.head.appendChild(script);
+}
 
-  const hospitalIcon = L.divIcon({
-    className: 'custom-hosp-marker',
-    html: '<div style="background:#0e2a47; color:#c69214; font-weight:bold; font-size:11px; padding:4px 8px; border-radius:4px; border:2px solid #c69214; box-shadow:0 2px 6px rgba(0,0,0,0.4);">🏥 PMCH Emergency Bay</div>',
-    iconSize: [140, 30]
+function initGoogleMap() {
+  if (googleMap) {
+    google.maps.event.trigger(googleMap, 'resize');
+    return;
+  }
+  const mapDiv = document.getElementById('ambulanceGoogleMap');
+  if (!mapDiv) return;
+
+  loadGoogleMapsScript(() => {
+    const fallback = document.getElementById('gmapFallbackNotice');
+    if (fallback) fallback.style.display = 'none';
+
+    googleMap = new google.maps.Map(mapDiv, {
+      center: PMCH_LATLNG,
+      zoom: 13,
+      mapTypeId: 'roadmap',
+      styles: [
+        { featureType: 'poi.business', stylers: [{ visibility: 'simplified' }] },
+        { featureType: 'transit', elementType: 'labels.icon', stylers: [{ visibility: 'off' }] }
+      ]
+    });
+
+    // Custom Overlay View to anchor animated DOM Emojis directly onto Google Map lat/lng
+    class CustomEmojiOverlay extends google.maps.OverlayView {
+      constructor() {
+        super();
+        this.div = document.createElement('div');
+        this.div.style.position = 'absolute';
+        this.div.style.width = '100%';
+        this.div.style.height = '100%';
+        this.div.style.pointerEvents = 'none';
+      }
+      onAdd() {
+        const panes = this.getPanes();
+        panes.overlayMouseTarget.appendChild(this.div);
+      }
+      draw() {
+        const projection = this.getProjection();
+        if (!projection) return;
+
+        // Render Hospital Landmark Pin
+        let hospPin = document.getElementById('hospBasePin');
+        if (!hospPin) {
+          hospPin = document.createElement('div');
+          hospPin.id = 'hospBasePin';
+          hospPin.className = 'gmap-hosp-pin';
+          hospPin.innerHTML = '🏥 <strong>PMCH Emergency Bay</strong><br/><small style="color:#fff;">Trauma Resuscitation</small>';
+          this.div.appendChild(hospPin);
+        }
+        const hospPixel = projection.fromLatLngToDivPixel(new google.maps.LatLng(PMCH_LATLNG.lat, PMCH_LATLNG.lng));
+        if (hospPixel) {
+          hospPin.style.left = `${hospPixel.x}px`;
+          hospPin.style.top = `${hospPixel.y}px`;
+        }
+
+        // Render each ambulance live position
+        for (const [id, data] of Object.entries(ambulanceEmojiOverlays)) {
+          const pixel = projection.fromLatLngToDivPixel(new google.maps.LatLng(data.lat, data.lng));
+          if (pixel && data.element) {
+            data.element.style.left = `${pixel.x}px`;
+            data.element.style.top = `${pixel.y}px`;
+          }
+        }
+      }
+      onRemove() {
+        if (this.div.parentElement) this.div.parentElement.removeChild(this.div);
+      }
+    }
+
+    customOverlayLayer = new CustomEmojiOverlay();
+    customOverlayLayer.setMap(googleMap);
+
+    loadAmbulanceFleet();
   });
-  L.marker(PMCH_COORDS, { icon: hospitalIcon }).addTo(map).bindPopup('<b>Panimalar Medical College Hospital</b><br/>Level 1 Trauma Bay');
-
-  loadAmbulanceFleet();
 }
 
 async function loadAmbulanceFleet() {
@@ -135,28 +227,85 @@ async function loadAmbulanceFleet() {
     }).join('');
   }
 
-  if (map) {
-    res.forEach(a => updateAmbulanceMarker(a));
-  }
+  res.forEach(a => updateLiveMovingAmbulance(a));
 }
 
-function updateAmbulanceMarker(a) {
-  if (!map) return;
-  let markerBg = '#15803d';
-  if (a.status === 'DISPATCHED') markerBg = '#dc2626';
-  if (a.status === 'MAINTENANCE' || a.status === 'OFFLINE') markerBg = '#64748b';
+// Live Moving 🚑 Emoji Engine on Google Maps
+function updateLiveMovingAmbulance(a) {
+  if (!customOverlayLayer || !customOverlayLayer.div) return;
 
-  const label = a.status === 'DISPATCHED' ? `${a.eta_mins}m` : a.status;
-  const iconHtml = `<div style="background:${markerBg}; color:#fff; font-size:11px; font-weight:bold; padding:3px 6px; border-radius:12px; border:2px solid #fff; box-shadow:0 2px 4px rgba(0,0,0,0.5); opacity:${a.status === 'MAINTENANCE' || a.status === 'OFFLINE' ? '0.65' : '1.0'};">🚑 ${a.id} (${label})</div>`;
-  const icon = L.divIcon({ className: 'amb-icon', html: iconHtml, iconSize: [100, 24] });
+  let existing = ambulanceEmojiOverlays[a.id];
+  const isDispatched = a.status === 'DISPATCHED';
+  const isOffline = a.status === 'MAINTENANCE' || a.status === 'OFFLINE';
 
-  if (ambulanceMarkers[a.id]) {
-    ambulanceMarkers[a.id].setLatLng([a.lat, a.lng]);
-    ambulanceMarkers[a.id].setIcon(icon);
+  let statusClass = 'standby';
+  if (isDispatched) statusClass = 'dispatched';
+  if (isOffline) statusClass = 'offline';
+
+  const sirenHtml = isDispatched ? '<span class="siren-beacon">🚨</span>' : '';
+  const label = isDispatched ? `${a.eta_mins}m ETA` : a.status;
+
+  if (!existing) {
+    const el = document.createElement('div');
+    el.id = `amb-marker-${a.id}`;
+    el.className = 'gmap-amb-marker';
+    el.style.pointerEvents = 'auto';
+
+    el.innerHTML = `
+      <div class="amb-badge-container">
+        <div class="amb-emoji-bubble">🚑${sirenHtml}</div>
+        <div class="amb-status-tag ${statusClass}">
+          <strong>${a.id}</strong> • ${label}
+        </div>
+      </div>
+    `;
+
+    el.onclick = () => {
+      alert(`Ambulance: ${a.id} (${a.vehicle_no})\nDriver: ${a.driver_name} (${a.driver_phone})\nStatus: ${a.status}\nVitals: ${a.patient_vitals_summary}\nETA: ${a.eta_mins} mins`);
+    };
+
+    customOverlayLayer.div.appendChild(el);
+    ambulanceEmojiOverlays[a.id] = { lat: a.lat, lng: a.lng, element: el, pathHistory: [{ lat: a.lat, lng: a.lng }] };
   } else {
-    ambulanceMarkers[a.id] = L.marker([a.lat, a.lng], { icon }).addTo(map)
-      .bindPopup(`<b>${a.id} (${a.vehicle_no})</b><br/>Driver: ${a.driver_name}<br/>Status: ${a.status}<br/>Vitals: ${a.patient_vitals_summary}`);
+    existing.lat = a.lat;
+    existing.lng = a.lng;
+    existing.pathHistory.push({ lat: a.lat, lng: a.lng });
+
+    // Update Tag
+    const tag = existing.element.querySelector('.amb-status-tag');
+    if (tag) {
+      tag.className = `amb-status-tag ${statusClass}`;
+      tag.innerHTML = `<strong>${a.id}</strong> • ${label}`;
+    }
+
+    const bubble = existing.element.querySelector('.amb-emoji-bubble');
+    if (bubble) {
+      bubble.innerHTML = `🚑${sirenHtml}`;
+      bubble.style.opacity = isOffline ? '0.5' : '1.0';
+    }
   }
+
+  // Draw Trajectory Tracking Polyline on Google Maps
+  if (isDispatched && googleMap) {
+    if (!trajectoryPolylines[a.id]) {
+      trajectoryPolylines[a.id] = new google.maps.Polyline({
+        path: [new google.maps.LatLng(a.lat, a.lng), new google.maps.LatLng(PMCH_LATLNG.lat, PMCH_LATLNG.lng)],
+        geodesic: true,
+        strokeColor: '#dc2626',
+        strokeOpacity: 0.85,
+        strokeWeight: 4,
+        map: googleMap
+      });
+    } else {
+      const path = trajectoryPolylines[a.id].getPath();
+      path.setAt(0, new google.maps.LatLng(a.lat, a.lng));
+    }
+  } else if (!isDispatched && trajectoryPolylines[a.id]) {
+    trajectoryPolylines[a.id].setMap(null);
+    delete trajectoryPolylines[a.id];
+  }
+
+  if (customOverlayLayer) customOverlayLayer.draw();
 }
 
 async function dispatchEmergencyAmbulance(id) {
@@ -181,7 +330,7 @@ async function setAmbulanceStatus(id, status) {
   }
 }
 
-// FEATURE 1: Paramedic Modal Controls
+// Paramedic Modal Controls
 function openParamedicModal(ambId) {
   document.getElementById('paramedicAmbId').value = ambId;
   document.getElementById('paramedicModalOverlay').style.display = 'flex';
@@ -214,7 +363,7 @@ async function submitParamedicTriage() {
   loadIpdBeds();
 }
 
-// FEATURE 2: Doctor AI Ambient Voice-to-SOAP Scribe
+// Doctor AI Ambient Voice-to-SOAP Scribe
 let speechRecognition = null;
 let isRecordingSoap = false;
 
@@ -223,7 +372,7 @@ function toggleVoiceSoapScribe() {
   const soapCard = document.getElementById('soapCard');
 
   if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-    return alert('Speech Recognition API not supported in this browser. Please use Chrome or Edge.');
+    return alert('Speech Recognition API not supported in this browser. Please use Google Chrome or Edge.');
   }
 
   if (isRecordingSoap) {
@@ -271,7 +420,6 @@ function parseTranscriptToSoap(text) {
   let assessment = '';
   let plan = '';
 
-  // Clinical Rule-Based Extraction
   if (lower.includes('pain') || lower.includes('fever') || lower.includes('headache') || lower.includes('cough') || lower.includes('swelling')) {
     subjective = text.trim();
   } else {
@@ -317,7 +465,7 @@ function applySoapToPrescription() {
   alert('Plan transferred directly into the Digital Prescription Desk!');
 }
 
-// FEATURE 3: GS1 / 2D Barcode Scanner (html5-qrcode)
+// GS1 / 2D Barcode Scanner (html5-qrcode)
 let html5QrScanner = null;
 let isScannerRunning = false;
 
@@ -341,9 +489,7 @@ function toggleBarcodeScanner() {
     (decodedText) => {
       verifyScannedBarcode(decodedText);
     },
-    (errorMessage) => {
-      // Scanning ongoing...
-    }
+    (errorMessage) => {}
   ).then(() => {
     isScannerRunning = true;
   }).catch(err => {
@@ -365,7 +511,7 @@ async function verifyScannedBarcode(barcode) {
       <div style="background:${res.isFefoCompliant ? '#dcfce7' : '#fee2e2'}; border:1px solid ${res.isFefoCompliant ? '#16a34a' : '#dc2626'}; padding:10px; border-radius:6px;">
         <p>${res.message}</p>
         <p><strong>Medicine:</strong> ${res.scannedBatch.medicine_name} | Batch: <code>${res.scannedBatch.batch_number}</code> | Expiry: <strong>${res.scannedBatch.expiry_date}</strong></p>
-        ${res.isFefoCompliant ? `<button class="btn btn-gold" style="margin-top:6px;" onclick="addToCart('${res.scannedBatch.medicine_id}', '${res.scannedBatch.medicine_name}', ${res.scannedBatch.unit_price})">Add Verified Batch to Dispense Cart</button>` : ''}
+        ${res.isFefoCompliant ? `<button class="btn btn-gold" style="margin-top:6px;" onclick="addToCart('${res.scannedBatch.medicine_id}', '${res.scannedBatch.medicine_name}',${res.scannedBatch.unit_price})">Add Verified Batch to Dispense Cart</button>` : ''}
       </div>
     `;
   } else {
@@ -417,7 +563,7 @@ async function loadNotificationLogs() {
 // WebSocket Event Listeners
 if (socket) {
   socket.on('ambulance-telemetry-update', (data) => {
-    updateAmbulanceMarker(data);
+    updateLiveMovingAmbulance(data);
     loadAmbulanceFleet();
   });
 
@@ -1196,10 +1342,7 @@ function switchTab(tabId) {
 
   const activeUhid = getActiveUhid();
   if (tabId === 'tab-ambulance') {
-    setTimeout(() => {
-      initAmbulanceMap();
-      if (map) map.invalidateSize();
-    }, 150);
+    setTimeout(initGoogleMap, 200);
     loadAmbulanceFleet();
   }
   if (tabId === 'tab-alerts') loadNotificationLogs();
@@ -1349,7 +1492,6 @@ async function adminAddMedicine() {
   alert(res.message);
   loadAdminDropdowns();
   loadPharmacy();
-  loadBatches();
 }
 
 async function adminAddBatch() {
