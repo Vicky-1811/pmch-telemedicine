@@ -378,15 +378,17 @@
       </div>
     </section>
 
-    <!-- TAB 3: REAL GOOGLE MAPS + LIVE MOVING AMBULANCE EMOJIS & TRAJECTORY -->
+    <!-- TAB 3: REAL GOOGLE MAPS + IN-CAR LIVE ROAD TRAFFIC, SIGNALS & MOVING EMOJIS -->
     <section id="tab-ambulance" class="tab-content">
       <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
         <div>
-          <h2>🚑 Live Google Maps Ambulance Fleet & Trajectory Radar</h2>
-          <small style="color: #64748b;">Live animated emoji vehicles moving along Chennai highway arterial paths with dynamic trajectory breadcrumbs.</small>
+          <h2>🚑 Live Google Maps In-Car Navigation & Traffic Radar</h2>
+          <small style="color: #64748b;">Turn-by-turn road snapping directions, traffic light signals (🚦), and real-time highway congestion.</small>
         </div>
-        <div style="display: flex; gap: 8px;">
-          <button class="btn" style="background: #0284c7; font-size: 12px;" onclick="promptGoogleMapsApiKey()">🔑 Set Google Maps Key</button>
+        <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+          <button class="btn" style="background: #16a34a; font-size: 12px;" onclick="toggleTrafficLayer()">🚦 Toggle Live Traffic</button>
+          <button class="btn" style="background: #eab308; color: #000; font-size: 12px;" onclick="toggleTrafficSignals()">🚥 Signals</button>
+          <button class="btn" style="background: #0284c7; font-size: 12px;" onclick="promptGoogleMapsApiKey()">🔑 Set Google Key</button>
           <button class="btn btn-danger" style="font-size: 12px;" onclick="dispatchEmergencyAmbulance('AMB-02')">🚨 Dispatch Standby Mobile ICU</button>
         </div>
       </div>

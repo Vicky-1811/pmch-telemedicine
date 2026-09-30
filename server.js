@@ -235,7 +235,7 @@ if (!billCols.includes('tpa_ref')) db.exec("ALTER TABLE discharge_bills ADD COLU
 const userCols = db.prepare('PRAGMA table_info(users)').all().map(c => c.name);
 if (!userCols.includes('email')) db.exec('ALTER TABLE users ADD COLUMN email TEXT;');
 
-// Seed Users
+// Seed Initial Users
 const users = [
   ['usr-admin', 'admin', 'admin@panimalar.ac.in', 'admin123', 'ADMIN', 'Dr. Radhakrishnan (Medical Supt.)', 'Administration'],
   ['usr-doc', 'doctor', 'suresh.kumar@panimalar.ac.in', 'doctor123', 'DOCTOR', 'Dr. Suresh Kumar S.', 'General Medicine'],
@@ -253,7 +253,7 @@ const doctors = [
 const insDoc = db.prepare('INSERT OR REPLACE INTO doctors VALUES (?, ?, ?, ?, ?, ?, ?)');
 doctors.forEach(d => insDoc.run(...d));
 
-// Seed Medicines & Batches with Barcodes
+// Seed Medicines & Initial Batches
 const meds = [
   ['pmch-med-1', 'Paracetamol 650mg (Dolo)', 'Analgesic', 20, 100, 0],
   ['pmch-med-2', 'Azithromycin 500mg', 'Antibiotic', 15, 60, 1],
@@ -276,7 +276,7 @@ if (batchCount === 0) {
   batches.forEach(b => insBatch.run(...b));
 }
 
-// Seed Beds & Labs
+// Seed Hospital Beds
 const beds = [
   ['BED-ICU-01', 'Critical Care ICU', 'Trauma Tower - 1st Floor', 3500.0, 'OCCUPIED', 'PMCH-80097', '2026-09-27 08:30:00'],
   ['BED-ICU-02', 'Critical Care ICU', 'Trauma Tower - 1st Floor', 3500.0, 'VACANT', null, null],
@@ -285,6 +285,7 @@ const beds = [
 const insBed = db.prepare('INSERT OR REPLACE INTO hospital_beds VALUES (?, ?, ?, ?, ?, ?, ?)');
 beds.forEach(b => insBed.run(...b));
 
+// Seed Diagnostic Labs
 const labs = [
   ['pmch-lab-1', 'Complete Blood Count (CBC)', 'Haematology', 350.0, 'Hb: 13-17 g/dL'],
   ['pmch-lab-2', 'Liver Function Test (LFT)', 'Biochemistry', 650.0, 'Normal']
@@ -309,7 +310,7 @@ const fleet = [
 const insFleet = db.prepare('INSERT OR REPLACE INTO ambulance_fleet VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
 fleet.forEach(f => insFleet.run(...f));
 
-// Live GPS Simulation
+// Live GPS Coordinates Movement Simulation toward PMCH (13.0498, 80.0754)
 setInterval(() => {
   const activeAmbulances = db.prepare("SELECT * FROM ambulance_fleet WHERE status = 'DISPATCHED'").all();
   activeAmbulances.forEach(amb => {
@@ -358,7 +359,7 @@ setInterval(() => {
   });
 }, 2500);
 
-// WebRTC Signaling
+// WebRTC Signaling Channels
 io.on('connection', (sock) => {
   sock.on('join-video-room', (roomId) => {
     sock.join(roomId);
@@ -386,7 +387,7 @@ app.post('/api/pmch/telemetry/trigger-code-blue', (req, res) => {
   res.json({ success: true });
 });
 
-// FEATURE 1: Paramedic Pre-Arrival En-Route Vitals Scribe & Emergency ICU Pre-Reservation
+// Paramedic Pre-Arrival En-Route Vitals Scribe & Emergency ICU Pre-Reservation
 app.post('/api/pmch/ambulance/triage-update', (req, res) => {
   try {
     const { id, gcs, hr, spo2, traumaCategory, autoReserveIcu } = req.body;
@@ -416,7 +417,6 @@ app.post('/api/pmch/ambulance/triage-update', (req, res) => {
 
     const updated = db.prepare('SELECT * FROM ambulance_fleet WHERE id = ?').get(id);
 
-    // Broadcast Real-time Code Red / Yellow Banner
     io.emit('trauma-triage-alert', {
       ambulanceId: id,
       vehicleNo: updated.vehicle_no,
@@ -437,13 +437,12 @@ app.post('/api/pmch/ambulance/triage-update', (req, res) => {
   }
 });
 
-// FEATURE 3: GS1 / 2D Barcode Verification & FEFO Audit
+// GS1 / 2D Barcode Verification & FEFO Audit
 app.post('/api/pmch/pharmacy/verify-barcode', (req, res) => {
   try {
     const { barcode } = req.body;
     const trimmed = (barcode || '').trim();
 
-    // Match batch by scanned barcode or batch number
     const batch = db.prepare(`
       SELECT b.*, m.name as medicine_name 
       FROM medicine_batches b 
@@ -455,7 +454,6 @@ app.post('/api/pmch/pharmacy/verify-barcode', (req, res) => {
       return res.status(404).json({ success: false, message: `No active medicine found for barcode: ${trimmed}` });
     }
 
-    // Check FEFO Compliance (is there an earlier expiring active batch for this drug?)
     const earliestBatch = db.prepare(`
       SELECT * FROM medicine_batches 
       WHERE medicine_id = ? AND current_stock > 0 AND expiry_date > DATE('now')

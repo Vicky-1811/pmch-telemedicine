@@ -71,12 +71,15 @@ async function advanceOpdDoctorQueue() {
   }
 }
 
-// ======================== REAL GOOGLE MAPS + ANIMATED 🚑 EMOJI OVERLAYS ========================
+// ======================== REAL GOOGLE MAPS + IN-CAR TRAFFIC & ANIMATED 🚑 EMOJI ========================
 let googleMap = null;
+let trafficLayer = null;
+let directionsService = null;
+let directionsRenderers = {};
+let trafficSignalMarkers = [];
 let customOverlayLayer = null;
 let googleMapsLoaded = false;
 let ambulanceEmojiOverlays = {};
-let trajectoryPolylines = {};
 const PMCH_LATLNG = { lat: 13.0498, lng: 80.0754 };
 
 function promptGoogleMapsApiKey() {
@@ -124,12 +127,41 @@ function initGoogleMap() {
 
     googleMap = new google.maps.Map(mapDiv, {
       center: PMCH_LATLNG,
-      zoom: 13,
+      zoom: 14,
+      heading: 320,
+      tilt: 45,
       mapTypeId: 'roadmap',
-      styles: [
-        { featureType: 'poi.business', stylers: [{ visibility: 'simplified' }] },
-        { featureType: 'transit', elementType: 'labels.icon', stylers: [{ visibility: 'off' }] }
-      ]
+      mapTypeControl: true,
+      mapTypeControlOptions: { style: google.maps.MapTypeControlStyle.DROPDOWN_MENU },
+      streetViewControl: false
+    });
+
+    // REAL-TIME GOOGLE ROAD TRAFFIC LAYER (Green / Orange / Red)
+    trafficLayer = new google.maps.TrafficLayer();
+    trafficLayer.setMap(googleMap);
+
+    directionsService = new google.maps.DirectionsService();
+
+    // Key Traffic Signals along Poonamallee - Porur Corridor
+    const trafficSignals = [
+      { lat: 13.0485, lng: 80.0920, name: 'Poonamallee Trunk Road Junction' },
+      { lat: 13.0410, lng: 80.1250, name: 'Kattupakkam Signal' },
+      { lat: 13.0375, lng: 80.1420, name: 'Iyyappanthangal Signal' },
+      { lat: 13.0350, lng: 80.1580, name: 'Porur Toll Plaza Junction' },
+      { lat: 13.0560, lng: 80.0680, name: 'Chembarambakkam Bypass Signal' }
+    ];
+
+    trafficSignals.forEach(sig => {
+      const sigMarker = new google.maps.Marker({
+        position: { lat: sig.lat, lng: sig.lng },
+        map: googleMap,
+        title: 'Traffic Signal: ' + sig.name,
+        icon: {
+          url: "data:image/svg+xml;utf-8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='30' viewBox='0 0 24 30'><rect width='14' height='26' x='5' y='2' rx='4' fill='%231e293b' stroke='%23fff' stroke-width='1.5'/><circle cx='12' cy='7' r='3' fill='%23ef4444'/><circle cx='12' cy='15' r='3' fill='%23f59e0b'/><circle cx='12' cy='23' r='3' fill='%2322c55e'/></svg>",
+          scaledSize: new google.maps.Size(24, 30)
+        }
+      });
+      trafficSignalMarkers.push(sigMarker);
     });
 
     // Custom Overlay View to anchor animated DOM Emojis directly onto Google Map lat/lng
@@ -150,7 +182,6 @@ function initGoogleMap() {
         const projection = this.getProjection();
         if (!projection) return;
 
-        // Render Hospital Landmark Pin
         let hospPin = document.getElementById('hospBasePin');
         if (!hospPin) {
           hospPin = document.createElement('div');
@@ -165,7 +196,6 @@ function initGoogleMap() {
           hospPin.style.top = `${hospPixel.y}px`;
         }
 
-        // Render each ambulance live position
         for (const [id, data] of Object.entries(ambulanceEmojiOverlays)) {
           const pixel = projection.fromLatLngToDivPixel(new google.maps.LatLng(data.lat, data.lng));
           if (pixel && data.element) {
@@ -184,6 +214,21 @@ function initGoogleMap() {
 
     loadAmbulanceFleet();
   });
+}
+
+function toggleTrafficLayer() {
+  if (!trafficLayer || !googleMap) return;
+  if (trafficLayer.getMap()) {
+    trafficLayer.setMap(null);
+  } else {
+    trafficLayer.setMap(googleMap);
+  }
+}
+
+let signalsVisible = true;
+function toggleTrafficSignals() {
+  signalsVisible = !signalsVisible;
+  trafficSignalMarkers.forEach(m => m.setVisible(signalsVisible));
 }
 
 async function loadAmbulanceFleet() {
@@ -271,7 +316,6 @@ function updateLiveMovingAmbulance(a) {
     existing.lng = a.lng;
     existing.pathHistory.push({ lat: a.lat, lng: a.lng });
 
-    // Update Tag
     const tag = existing.element.querySelector('.amb-status-tag');
     if (tag) {
       tag.className = `amb-status-tag ${statusClass}`;
@@ -285,24 +329,36 @@ function updateLiveMovingAmbulance(a) {
     }
   }
 
-  // Draw Trajectory Tracking Polyline on Google Maps
-  if (isDispatched && googleMap) {
-    if (!trajectoryPolylines[a.id]) {
-      trajectoryPolylines[a.id] = new google.maps.Polyline({
-        path: [new google.maps.LatLng(a.lat, a.lng), new google.maps.LatLng(PMCH_LATLNG.lat, PMCH_LATLNG.lng)],
-        geodesic: true,
-        strokeColor: '#dc2626',
-        strokeOpacity: 0.85,
-        strokeWeight: 4,
-        map: googleMap
+  // Real Road Snapping Directions (Turn-by-turn road tracking)
+  if (isDispatched && directionsService && googleMap) {
+    if (!directionsRenderers[a.id]) {
+      directionsRenderers[a.id] = new google.maps.DirectionsRenderer({
+        map: googleMap,
+        suppressMarkers: true,
+        polylineOptions: {
+          strokeColor: '#2563eb',
+          strokeWeight: 6,
+          strokeOpacity: 0.85
+        }
       });
-    } else {
-      const path = trajectoryPolylines[a.id].getPath();
-      path.setAt(0, new google.maps.LatLng(a.lat, a.lng));
     }
-  } else if (!isDispatched && trajectoryPolylines[a.id]) {
-    trajectoryPolylines[a.id].setMap(null);
-    delete trajectoryPolylines[a.id];
+
+    directionsService.route({
+      origin: new google.maps.LatLng(a.lat, a.lng),
+      destination: new google.maps.LatLng(PMCH_LATLNG.lat, PMCH_LATLNG.lng),
+      travelMode: google.maps.TravelMode.DRIVING,
+      drivingOptions: {
+        departureTime: new Date(),
+        trafficModel: google.maps.TrafficModel.BEST_GUESS
+      }
+    }, (result, status) => {
+      if (status === 'OK' && directionsRenderers[a.id]) {
+        directionsRenderers[a.id].setDirections(result);
+      }
+    });
+  } else if (!isDispatched && directionsRenderers[a.id]) {
+    directionsRenderers[a.id].setMap(null);
+    delete directionsRenderers[a.id];
   }
 
   if (customOverlayLayer) customOverlayLayer.draw();
@@ -511,7 +567,7 @@ async function verifyScannedBarcode(barcode) {
       <div style="background:${res.isFefoCompliant ? '#dcfce7' : '#fee2e2'}; border:1px solid ${res.isFefoCompliant ? '#16a34a' : '#dc2626'}; padding:10px; border-radius:6px;">
         <p>${res.message}</p>
         <p><strong>Medicine:</strong> ${res.scannedBatch.medicine_name} | Batch: <code>${res.scannedBatch.batch_number}</code> | Expiry: <strong>${res.scannedBatch.expiry_date}</strong></p>
-        ${res.isFefoCompliant ? `<button class="btn btn-gold" style="margin-top:6px;" onclick="addToCart('${res.scannedBatch.medicine_id}', '${res.scannedBatch.medicine_name}',${res.scannedBatch.unit_price})">Add Verified Batch to Dispense Cart</button>` : ''}
+        ${res.isFefoCompliant ? `<button class="btn btn-gold" style="margin-top:6px;" onclick="addToCart('${res.scannedBatch.medicine_id}', '${res.scannedBatch.medicine_name}', ${res.scannedBatch.unit_price})">Add Verified Batch to Dispense Cart</button>` : ''}
       </div>
     `;
   } else {
@@ -1492,6 +1548,7 @@ async function adminAddMedicine() {
   alert(res.message);
   loadAdminDropdowns();
   loadPharmacy();
+  loadBatches();
 }
 
 async function adminAddBatch() {
