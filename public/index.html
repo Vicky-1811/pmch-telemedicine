@@ -43,14 +43,20 @@
     }
     @keyframes slide-in { from { transform: translateX(100%); } to { transform: translateX(0); } }
 
-    #upiModalOverlay, #paramedicModalOverlay {
+    #upiModalOverlay, #paramedicModalOverlay, #teleTriageModalOverlay {
       position: fixed; top: 0; left: 0; width: 100%; height: 100%;
       background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(4px);
       z-index: 99999; display: none; justify-content: center; align-items: center; padding: 16px;
     }
     .modal-card {
-      background: #fff; width: 100%; max-width: 440px; border-radius: 12px;
+      background: #fff; width: 100%; max-width: 460px; border-radius: 12px;
       box-shadow: 0 25px 50px rgba(0,0,0,0.3); padding: 24px; text-align: center;
+    }
+
+    /* Tele-Triage Big Command Center Modal */
+    .tele-triage-card {
+      background: #020617; color: #f8fafc; width: 100%; max-width: 850px;
+      border-radius: 12px; border: 2px solid #0284c7; padding: 20px; box-shadow: 0 30px 60px rgba(0,0,0,0.6);
     }
 
     #loginOverlay {
@@ -192,6 +198,54 @@
     </div>
   </div>
 
+  <!-- OPTION 1: IN-AMBULANCE TWO-WAY TELE-TRIAGE & BIOMETRICS MODAL -->
+  <div id="teleTriageModalOverlay">
+    <div class="tele-triage-card">
+      <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1e293b; padding-bottom: 10px;">
+        <div>
+          <h3 style="color: #38bdf8; display: flex; align-items: center; gap: 8px;">
+            📡 In-Transit Tele-Triage ICU Command (<span id="teleTriageAmbId">AMB-01</span>)
+          </h3>
+          <small style="color: #94a3b8;">Direct WebRTC Tele-Resuscitation Link between En-Route Paramedic & PMCH Trauma Team</small>
+        </div>
+        <button class="btn btn-danger" style="padding: 4px 10px; font-size: 11px;" onclick="closeTeleTriageModal()">Close Feed</button>
+      </div>
+
+      <!-- Live Video Two-Way Feeds -->
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px;">
+        <div>
+          <small style="color: #cbd5e1; font-weight: bold;">Paramedic In-Ambulance Camera</small>
+          <video id="triageParamedicVideo" class="video-feed" autoplay playsinline muted style="height: 200px;"></video>
+        </div>
+        <div>
+          <small style="color: #cbd5e1; font-weight: bold;">PMCH Emergency Bay Team</small>
+          <video id="triageErVideo" class="video-feed" autoplay playsinline style="height: 200px;"></video>
+        </div>
+      </div>
+
+      <!-- Live Oscilloscope ECG & Pleth Waveform -->
+      <div style="background: #000; border: 1px solid #1e293b; border-radius: 6px; padding: 10px; margin-top: 12px;">
+        <div style="display: flex; justify-content: space-between; font-family: monospace; font-size: 16px;">
+          <div>LEAD II ECG: <span id="triageLiveHr" style="color: #22c55e;">104</span> <small>BPM</small></div>
+          <div>SpO2: <span id="triageLiveSpo2" style="color: #38bdf8;">94%</span></div>
+          <div>GCS: <span id="triageLiveGcs" style="color: #facc15;">14/15</span></div>
+          <div>TRAUMA: <span id="triageLiveType" style="color: #f87171;">Blunt Trauma</span></div>
+        </div>
+        <canvas id="triageEcgCanvas" width="800" height="75" style="width: 100%; height: 75px; background: #000;"></canvas>
+      </div>
+
+      <!-- Rapid Response Activation Bar -->
+      <div style="margin-top: 14px; text-align: left;">
+        <strong style="color: #e2e8f0; font-size: 12px;">🚨 Pre-Activate Specialized Rapid Response Unit:</strong>
+        <div style="display: flex; gap: 8px; margin-top: 6px;">
+          <button class="btn" style="background: #dc2626; flex: 1;" onclick="triggerRapidResponse('TRAUMA_OT')">🔪 Pre-Scratch Trauma OT</button>
+          <button class="btn" style="background: #ea580c; flex: 1;" onclick="triggerRapidResponse('CATH_LAB')">❤️ Pre-Alert Cath Lab (STEMI)</button>
+          <button class="btn" style="background: #7c3aed; flex: 1;" onclick="triggerRapidResponse('STROKE_CT')">🧠 Pre-Book Stroke CT Team</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- PARAMEDIC EN-ROUTE VITALS INPUT MODAL -->
   <div id="paramedicModalOverlay">
     <div class="modal-card" style="border-top: 6px solid #dc2626;">
@@ -271,7 +325,7 @@
         <div class="quick-roles">
           <button type="button" class="quick-role-btn" onclick="fillLogin('admin', 'admin123')">🔑 Admin</button>
           <button type="button" class="quick-role-btn" onclick="fillLogin('doctor', 'doctor123')">👨‍⚕️ Doctor</button>
-          <button type="button" class="quick-role-btn" onclick="fillLogin('patient', 'patient123')">🧑‍🤝‍🧑 Patient</button>
+          <button type="button" class="quick-role-btn" onclick="fillLogin('patient', 'patient123')">🧑‍‍🤝‍🧑 Patient</button>
         </div>
       </div>
 

@@ -217,7 +217,7 @@ db.exec(`
   );
 `);
 
-// Safe Migrations
+// Migrations
 const ambCols = db.prepare('PRAGMA table_info(ambulance_fleet)').all().map(c => c.name);
 if (!ambCols.includes('triage_gcs')) db.exec('ALTER TABLE ambulance_fleet ADD COLUMN triage_gcs INTEGER DEFAULT 15;');
 if (!ambCols.includes('triage_hr')) db.exec('ALTER TABLE ambulance_fleet ADD COLUMN triage_hr INTEGER DEFAULT 75;');
@@ -238,7 +238,7 @@ if (!userCols.includes('email')) db.exec('ALTER TABLE users ADD COLUMN email TEX
 // Seed Initial Users
 const users = [
   ['usr-admin', 'admin', 'admin@panimalar.ac.in', 'admin123', 'ADMIN', 'Dr. Radhakrishnan (Medical Supt.)', 'Administration'],
-  ['usr-doc', 'doctor', 'suresh.kumar@panimalar.ac.in', 'doctor123', 'DOCTOR', 'Dr. Suresh Kumar S.', 'General Medicine'],
+  ['usr-doc', 'doctor', 'suresh.kumar@panimalar.ac.in', 'doctor123', 'DOCTOR', 'Dr. Suresh Kumar S.', 'General Medicine / Trauma'],
   ['usr-patient', 'patient', 'kavitha.patient@gmail.com', 'patient123', 'PATIENT', 'Kavitha R.', 'Outpatient (UHID: PMCH-80097)']
 ];
 const insUser = db.prepare('INSERT OR REPLACE INTO users VALUES (?, ?, ?, ?, ?, ?, ?)');
@@ -246,7 +246,7 @@ users.forEach(u => insUser.run(...u));
 
 // Seed Doctors
 const doctors = [
-  ['pmch-101', 'Dr. Suresh Kumar S.', 'General Medicine', '16 yrs', 300, 'Unit 1 / OPD Block A', 101],
+  ['pmch-101', 'Dr. Suresh Kumar S.', 'Emergency Medicine & Critical Care', '16 yrs', 300, 'Trauma Resuscitation Bay', 101],
   ['pmch-102', 'Dr. Thangamani P.', 'General Surgery', '20 yrs', 400, 'Unit 2 / Surgical Block', 101],
   ['pmch-103', 'Dr. Gayathri Devi T.', 'Pathology & Diagnostics', '15 yrs', 250, 'Central Lab Block', 101]
 ];
@@ -359,7 +359,7 @@ setInterval(() => {
   });
 }, 2500);
 
-// WebRTC Signaling Channels
+// WebRTC Signaling Channels (Handles Consultation & In-Ambulance Feeds)
 io.on('connection', (sock) => {
   sock.on('join-video-room', (roomId) => {
     sock.join(roomId);
@@ -371,6 +371,17 @@ io.on('connection', (sock) => {
   sock.on('leave-video-room', (roomId) => {
     sock.leave(roomId);
     sock.to(roomId).emit('peer-left');
+  });
+
+  // Rapid Response Specialty OT / Cath-Lab Activation Broadcast
+  sock.on('trigger-rapid-response', (data) => {
+    const { ambulanceId, teamType, patientSummary } = data;
+    io.emit('rapid-response-alert', {
+      ambulanceId,
+      teamType, // "CATH_LAB", "STROKE_CT", "TRAUMA_OT"
+      patientSummary,
+      timestamp: new Date().toLocaleTimeString('en-IN')
+    });
   });
 });
 

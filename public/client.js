@@ -1,4 +1,4 @@
-git add public/index.html public/client.jslet socket;
+let socket;
 let currentUser = null;
 let cart = [];
 let lastCalculatedBill = null;
@@ -87,7 +87,6 @@ function initNavMap() {
     return;
   }
 
-  // Realistic High-Contrast Clean Navigation Basemap (Zero-Cost, No Keys, No Limits)
   navMap = L.map('ambulanceNavMap', {
     zoomControl: true,
     attributionControl: false
@@ -98,7 +97,6 @@ function initNavMap() {
     subdomains: 'abcd'
   }).addTo(navMap);
 
-  // Panimalar Hospital Base Station
   const hospIcon = L.divIcon({
     className: 'custom-hosp-pin',
     html: '<div class="incar-hosp-pin">🏥 <strong>PMCH Emergency Bay</strong><br/><small style="color:#fff;">Trauma Resuscitation</small></div>',
@@ -106,22 +104,17 @@ function initNavMap() {
   });
   L.marker(PMCH_COORDS, { icon: hospIcon }).addTo(navMap).bindPopup('<b>Panimalar Medical College Hospital</b><br/>Level 1 Trauma Bay & Emergency Entrance');
 
-  // Draw Highway Traffic Congestion Lanes (Green, Orange, Red)
   renderLiveTrafficLanes();
-
-  // Draw 3-Color Traffic Light Signal Posts (🚦)
   renderTrafficSignals();
-
   loadAmbulanceFleet();
 }
 
 function renderLiveTrafficLanes() {
-  // Road segments: NH48 / Poonamallee High Road / Porur Link
   const trafficCorridors = [
-    { coords: [[13.0560, 80.0650], [13.0520, 80.0720], [13.0498, 80.0754]], color: '#16a34a', status: 'Clear Flow (60 km/h)' }, // NH48 West (Green)
-    { coords: [[13.0498, 80.0754], [13.0470, 80.0880], [13.0440, 80.1050]], color: '#ea580c', status: 'Moderate Traffic (30 km/h)' }, // Trunk Rd (Orange)
-    { coords: [[13.0440, 80.1050], [13.0410, 80.1250], [13.0375, 80.1420]], color: '#dc2626', status: 'Heavy Congestion (12 km/h)' }, // Kattupakkam Bottleneck (Red)
-    { coords: [[13.0375, 80.1420], [13.0350, 80.1580]], color: '#16a34a', status: 'Clear Flow (50 km/h)' } // Porur Flyover (Green)
+    { coords: [[13.0560, 80.0650], [13.0520, 80.0720], [13.0498, 80.0754]], color: '#16a34a', status: 'Clear Flow (60 km/h)' },
+    { coords: [[13.0498, 80.0754], [13.0470, 80.0880], [13.0440, 80.1050]], color: '#ea580c', status: 'Moderate Traffic (30 km/h)' },
+    { coords: [[13.0440, 80.1050], [13.0410, 80.1250], [13.0375, 80.1420]], color: '#dc2626', status: 'Heavy Congestion (12 km/h)' },
+    { coords: [[13.0375, 80.1420], [13.0350, 80.1580]], color: '#16a34a', status: 'Clear Flow (50 km/h)' }
   ];
 
   trafficCorridors.forEach(corridor => {
@@ -192,7 +185,8 @@ async function loadAmbulanceFleet() {
         `;
       } else if (a.status === 'DISPATCHED') {
         actionButtons = `
-          <button class="btn" style="padding:3px 7px; font-size:11px; background:#0284c7;" onclick="openParamedicModal('${a.id}')">📡 En-Route Vitals</button>
+          <button class="btn" style="padding:3px 7px; font-size:11px; background:#0284c7;" onclick="openTeleTriageModal('${a.id}')">📹 Live Tele-Triage</button>
+          <button class="btn" style="padding:3px 7px; font-size:11px; background:#e11d48;" onclick="openParamedicModal('${a.id}')">📡 Vitals</button>
           <button class="btn" style="padding:3px 7px; font-size:11px; background:#15803d;" onclick="setAmbulanceStatus('${a.id}', 'AVAILABLE')">Dock</button>
           <button class="btn" style="padding:3px 7px; font-size:11px; background:#64748b;" onclick="setAmbulanceStatus('${a.id}', 'MAINTENANCE')">Offline</button>
         `;
@@ -257,11 +251,10 @@ function updateLiveMovingAmbulance(a) {
       .bindPopup(`<b>${a.id} (${a.vehicle_no})</b><br/>Driver: ${a.driver_name} (${a.driver_phone})<br/>Status: ${a.status}<br/>Vitals: ${a.patient_vitals_summary}<br/>ETA: ${a.eta_mins} mins`);
   }
 
-  // Draw Road-Snapped Trajectory Line
   if (isDispatched) {
     const routeCoords = [
       [a.lat, a.lng],
-      [(a.lat + PMCH_COORDS[0]) / 2 + 0.002, (a.lng + PMCH_COORDS[1]) / 2 - 0.001], // Waypoint snapping
+      [(a.lat + PMCH_COORDS[0]) / 2 + 0.002, (a.lng + PMCH_COORDS[1]) / 2 - 0.001],
       PMCH_COORDS
     ];
 
@@ -301,6 +294,84 @@ async function setAmbulanceStatus(id, status) {
   if (res.success) {
     loadAmbulanceFleet();
   }
+}
+
+// ======================== OPTION 1: IN-AMBULANCE TWO-WAY TELE-TRIAGE ========================
+let teleTriageStream = null;
+let teleTriagePeer = null;
+let currentTeleAmbulanceId = null;
+let teleTriageX = 0;
+let lastTeleY = 35;
+
+async function openTeleTriageModal(ambId) {
+  currentTeleAmbulanceId = ambId;
+  document.getElementById('teleTriageAmbId').innerText = ambId;
+  document.getElementById('teleTriageModalOverlay').style.display = 'flex';
+
+  // Request media for simulated paramedic camera
+  try {
+    teleTriageStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    document.getElementById('triageParamedicVideo').srcObject = teleTriageStream;
+    document.getElementById('triageErVideo').srcObject = teleTriageStream; // Echo for demo preview
+  } catch (err) {
+    console.warn('Camera preview unavailable:', err);
+  }
+
+  initTeleTriageEcgSweep();
+}
+
+function closeTeleTriageModal() {
+  if (teleTriageStream) {
+    teleTriageStream.getTracks().forEach(t => t.stop());
+    teleTriageStream = null;
+  }
+  document.getElementById('teleTriageModalOverlay').style.display = 'none';
+}
+
+function initTeleTriageEcgSweep() {
+  const canvas = document.getElementById('triageEcgCanvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+
+  function drawTriageSweep() {
+    if (document.getElementById('teleTriageModalOverlay').style.display === 'none') return;
+
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.1)';
+    ctx.fillRect(teleTriageX, 0, 6, canvas.height);
+
+    let y = 35;
+    const cycle = teleTriageX % 50;
+    if (cycle > 18 && cycle < 22) y = 32;
+    else if (cycle === 23) y = 42;
+    else if (cycle === 24) y = 8;
+    else if (cycle === 25) y = 55;
+    else if (cycle > 30 && cycle < 35) y = 30;
+    else y = 35 + (Math.random() * 2 - 1);
+
+    ctx.strokeStyle = '#22c55e';
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.moveTo(teleTriageX === 0 ? 0 : teleTriageX - 2, lastTeleY);
+    ctx.lineTo(teleTriageX, y);
+    ctx.stroke();
+
+    lastTeleY = y;
+    teleTriageX = (teleTriageX + 2) % canvas.width;
+    requestAnimationFrame(drawTriageSweep);
+  }
+  requestAnimationFrame(drawTriageSweep);
+}
+
+function triggerRapidResponse(teamType) {
+  playAlertTone();
+  if (socket) {
+    socket.emit('trigger-rapid-response', {
+      ambulanceId: currentTeleAmbulanceId || 'AMB-01',
+      teamType,
+      patientSummary: 'Severe En-Route Trauma Triage | ETA < 6 Mins'
+    });
+  }
+  alert(`🚨 SUCCESS: Rapid Response Pre-Alert Dispatched to [${teamType}] at Panimalar Hospital!`);
 }
 
 // Paramedic Modal Controls
@@ -484,7 +555,7 @@ async function verifyScannedBarcode(barcode) {
       <div style="background:${res.isFefoCompliant ? '#dcfce7' : '#fee2e2'}; border:1px solid ${res.isFefoCompliant ? '#16a34a' : '#dc2626'}; padding:10px; border-radius:6px;">
         <p>${res.message}</p>
         <p><strong>Medicine:</strong> ${res.scannedBatch.medicine_name} | Batch: <code>${res.scannedBatch.batch_number}</code> | Expiry: <strong>${res.scannedBatch.expiry_date}</strong></p>
-        ${res.isFefoCompliant ? `<button class="btn btn-gold" style="margin-top:6px;" onclick="addToCart('${res.scannedBatch.medicine_id}', '${res.scannedBatch.medicine_name}',${res.scannedBatch.unit_price})">Add Verified Batch to Dispense Cart</button>` : ''}
+        ${res.isFefoCompliant ? `<button class="btn btn-gold" style="margin-top:6px;" onclick="addToCart('${res.scannedBatch.medicine_id}', '${res.scannedBatch.medicine_name}', ${res.scannedBatch.unit_price})">Add Verified Batch to Dispense Cart</button>` : ''}
       </div>
     `;
   } else {
@@ -538,6 +609,23 @@ if (socket) {
   socket.on('ambulance-telemetry-update', (data) => {
     updateLiveMovingAmbulance(data);
     loadAmbulanceFleet();
+
+    // If currently watching tele-triage for this ambulance, update biometrics
+    if (currentTeleAmbulanceId === data.id) {
+      const hrEl = document.getElementById('triageLiveHr');
+      const spo2El = document.getElementById('triageLiveSpo2');
+      const gcsEl = document.getElementById('triageLiveGcs');
+      const typeEl = document.getElementById('triageLiveType');
+      if (hrEl) hrEl.innerText = data.triageHr || 104;
+      if (spo2El) spo2El.innerText = `${data.triageSpo2 || 94}%`;
+      if (gcsEl) gcsEl.innerText = `${data.triageGcs || 14}/15`;
+      if (typeEl) typeEl.innerText = data.traumaCategory || 'Blunt Trauma';
+    }
+  });
+
+  socket.on('rapid-response-alert', (data) => {
+    playAlertTone();
+    alert(`🚨 CODE RED RAPID RESPONSE ACTIVATED!\nUnit: [${data.teamType}]\nTriggered by: ${data.ambulanceId}\nTeam scrubbed at ${data.timestamp}`);
   });
 
   socket.on('trauma-triage-alert', (data) => {
@@ -638,7 +726,7 @@ async function simulateCodeBlue() {
   });
 }
 
-// WebRTC Video Controls
+// WebRTC Telemedicine Call
 let localStream = null;
 let peerConnection = null;
 const telemedRoomId = 'pmch-consultation-room-101';
