@@ -9,6 +9,9 @@ try {
   console.warn('Socket connection delayed:', e);
 }
 
+// Hardcoded TomTom API Key
+const TOMTOM_KEY = 'EfnUi71ULpYWHO3FFSpS2NHmWRwCdRo3';
+
 // Audio Queue Chime & Speech Synthesis
 let audioCtx = null;
 async function playAlertTone() {
@@ -71,11 +74,12 @@ async function advanceOpdDoctorQueue() {
   }
 }
 
-// ======================== IN-CAR VECTOR NAVIGATION ENGINE (LEAFLET + CARTO) ========================
+// ======================== TOMTOM MAP TILES & REAL-TIME TRAFFIC FLOW ========================
 let navMap = null;
+let tomtomTrafficTileLayer = null;
+let tomtomBaseTileLayer = null;
 let ambulanceMarkers = {};
 let routePolylines = {};
-let trafficPolylines = [];
 let signalMarkers = [];
 let showTraffic = true;
 let showSignals = true;
@@ -87,45 +91,35 @@ function initNavMap() {
     return;
   }
 
+  // Initialize Map Viewport centered on PMCH
   navMap = L.map('ambulanceNavMap', {
     zoomControl: true,
     attributionControl: false
   }).setView(PMCH_COORDS, 13);
 
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+  // 1. TomTom High-Definition Raster Map Tiles
+  tomtomBaseTileLayer = L.tileLayer(`https://{s}.api.tomtom.com/map/1/tile/basic/main/{z}/{x}/{y}.png?key=${TOMTOM_KEY}`, {
     maxZoom: 19,
     subdomains: 'abcd'
   }).addTo(navMap);
 
+  // 2. TomTom Real-Time Live Road Traffic Flow Layer (Green, Orange, Red)
+  tomtomTrafficTileLayer = L.tileLayer(`https://{s}.api.tomtom.com/traffic/map/4/tile/flow/relative/{z}/{x}/{y}.png?key=${TOMTOM_KEY}`, {
+    maxZoom: 19,
+    opacity: 0.85,
+    subdomains: 'abcd'
+  }).addTo(navMap);
+
+  // Panimalar Hospital Base Station Landmark
   const hospIcon = L.divIcon({
     className: 'custom-hosp-pin',
     html: '<div class="incar-hosp-pin">🏥 <strong>PMCH Emergency Bay</strong><br/><small style="color:#fff;">Trauma Resuscitation</small></div>',
     iconSize: [170, 36]
   });
-  L.marker(PMCH_COORDS, { icon: hospIcon }).addTo(navMap).bindPopup('<b>Panimalar Medical College Hospital</b><br/>Level 1 Trauma Bay & Emergency Entrance');
+  L.marker(PMCH_COORDS, { icon: hospIcon }).addTo(navMap).bindPopup('<b>Panimalar Medical College Hospital</b><br/>Level 1 Trauma Bay');
 
-  renderLiveTrafficLanes();
   renderTrafficSignals();
   loadAmbulanceFleet();
-}
-
-function renderLiveTrafficLanes() {
-  const trafficCorridors = [
-    { coords: [[13.0560, 80.0650], [13.0520, 80.0720], [13.0498, 80.0754]], color: '#16a34a', status: 'Clear Flow (60 km/h)' },
-    { coords: [[13.0498, 80.0754], [13.0470, 80.0880], [13.0440, 80.1050]], color: '#ea580c', status: 'Moderate Traffic (30 km/h)' },
-    { coords: [[13.0440, 80.1050], [13.0410, 80.1250], [13.0375, 80.1420]], color: '#dc2626', status: 'Heavy Congestion (12 km/h)' },
-    { coords: [[13.0375, 80.1420], [13.0350, 80.1580]], color: '#16a34a', status: 'Clear Flow (50 km/h)' }
-  ];
-
-  trafficCorridors.forEach(corridor => {
-    const line = L.polyline(corridor.coords, {
-      color: corridor.color,
-      weight: 6,
-      opacity: 0.85,
-      lineCap: 'round'
-    }).addTo(navMap).bindPopup(`<b>Road Traffic Status:</b> ${corridor.status}`);
-    trafficPolylines.push(line);
-  });
 }
 
 function renderTrafficSignals() {
@@ -156,9 +150,10 @@ function renderTrafficSignals() {
 
 function toggleTrafficDisplay() {
   showTraffic = !showTraffic;
-  trafficPolylines.forEach(l => {
-    if (showTraffic) l.addTo(navMap); else l.remove();
-  });
+  if (tomtomTrafficTileLayer) {
+    if (showTraffic) tomtomTrafficTileLayer.addTo(navMap);
+    else tomtomTrafficTileLayer.remove();
+  }
 }
 
 function toggleSignalDisplay() {
@@ -185,7 +180,7 @@ async function loadAmbulanceFleet() {
         `;
       } else if (a.status === 'DISPATCHED') {
         actionButtons = `
-          <button class="btn" style="padding:3px 7px; font-size:11px; background:#0284c7;" onclick="openTeleTriageModal('${a.id}')">📹 Live Tele-Triage</button>
+          <button class="btn" style="padding:3px 7px; font-size:11px; background:#0284c7;" onclick="openTeleTriageModal('${a.id}')">📹 Tele-Triage</button>
           <button class="btn" style="padding:3px 7px; font-size:11px; background:#e11d48;" onclick="openParamedicModal('${a.id}')">📡 Vitals</button>
           <button class="btn" style="padding:3px 7px; font-size:11px; background:#15803d;" onclick="setAmbulanceStatus('${a.id}', 'AVAILABLE')">Dock</button>
           <button class="btn" style="padding:3px 7px; font-size:11px; background:#64748b;" onclick="setAmbulanceStatus('${a.id}', 'MAINTENANCE')">Offline</button>
@@ -251,6 +246,7 @@ function updateLiveMovingAmbulance(a) {
       .bindPopup(`<b>${a.id} (${a.vehicle_no})</b><br/>Driver: ${a.driver_name} (${a.driver_phone})<br/>Status: ${a.status}<br/>Vitals: ${a.patient_vitals_summary}<br/>ETA: ${a.eta_mins} mins`);
   }
 
+  // Draw Road Navigation Path
   if (isDispatched) {
     const routeCoords = [
       [a.lat, a.lng],
@@ -296,9 +292,8 @@ async function setAmbulanceStatus(id, status) {
   }
 }
 
-// ======================== OPTION 1: IN-AMBULANCE TWO-WAY TELE-TRIAGE ========================
+// In-Ambulance Tele-Triage
 let teleTriageStream = null;
-let teleTriagePeer = null;
 let currentTeleAmbulanceId = null;
 let teleTriageX = 0;
 let lastTeleY = 35;
@@ -308,11 +303,10 @@ async function openTeleTriageModal(ambId) {
   document.getElementById('teleTriageAmbId').innerText = ambId;
   document.getElementById('teleTriageModalOverlay').style.display = 'flex';
 
-  // Request media for simulated paramedic camera
   try {
     teleTriageStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
     document.getElementById('triageParamedicVideo').srcObject = teleTriageStream;
-    document.getElementById('triageErVideo').srcObject = teleTriageStream; // Echo for demo preview
+    document.getElementById('triageErVideo').srcObject = teleTriageStream;
   } catch (err) {
     console.warn('Camera preview unavailable:', err);
   }
@@ -610,7 +604,6 @@ if (socket) {
     updateLiveMovingAmbulance(data);
     loadAmbulanceFleet();
 
-    // If currently watching tele-triage for this ambulance, update biometrics
     if (currentTeleAmbulanceId === data.id) {
       const hrEl = document.getElementById('triageLiveHr');
       const spo2El = document.getElementById('triageLiveSpo2');
